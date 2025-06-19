@@ -1,19 +1,24 @@
 {
-  "name": "emotica-api",
+  "name": "@pinecone-database/pinecone",
   "version": "1.0.0",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "",
+  "homepage": "https://github.com/adwait-rao/Emotica#readme",
+  "bugs": {
+    "url": "https://github.com/adwait-rao/Emotica/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/adwait-rao/Emotica.git"
   },
-  "author": "Adwait Rao",
   "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/adwait-rao/Emotica/issues"
+  "author": "Adwait Rao",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test-pinecone": "node src/scripts/testPinecone.js"
   },
-  "homepage": "https://github.com/adwait-rao/Emotica#readme",
-  "description": ""
+  "dependencies": {
+    "@pinecone-database/pinecone": "^6.1.1",
+    "dotenv": "^16.5.0"
+  }
 }
