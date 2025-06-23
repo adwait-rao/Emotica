@@ -49,3 +49,19 @@ export async function preloadChatHistory(userId, allMessages) {
 export async function clearChat(userId) {
   await redisClient.del(getChatKey(userId));
 }
+
+export async function getSessionStatus(userId) {
+  return await redisClient.get(`session_active:${userId}`);
+}
+
+export async function setSessionStatus(userId) {
+  // Optional: Set expiry to auto-clear stale sessions
+  return await redisClient.set(`session_active:${userId}`, "true", {
+    EX: 3600, // 1 hour
+  });
+}
+
+export async function clearUserSession(userId) {
+  await clearChat(userId); // clears Redis chat messages
+  await redisClient.del(`session_active:${userId}`); // clears session flag
+}
