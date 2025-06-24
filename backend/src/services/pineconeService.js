@@ -36,7 +36,7 @@ export const ensurePineconeIndexExists = async () => {
       },
     });
 
-    console.log("✅ Standard index created.");
+    console.log("Standard index created.");
 
     // Wait for index to be ready
     console.log("⏳ Waiting for index to be ready...");
@@ -49,10 +49,10 @@ export const ensurePineconeIndexExists = async () => {
         const indexStats = await pinecone.describeIndex(indexName);
         if (indexStats.status?.ready) {
           indexReady = true;
-          console.log("✅ Index is ready.");
+          console.log("Index is ready.");
         } else {
           console.log(
-            `⏳ Index status: ${
+            `Index status: ${
               indexStats.status?.state || "unknown"
             }, waiting...`
           );
@@ -60,7 +60,7 @@ export const ensurePineconeIndexExists = async () => {
           attempts++;
         }
       } catch (error) {
-        console.log("⏳ Index not available yet, waiting...");
+        console.log("Index not available yet, waiting...");
         await new Promise((resolve) => setTimeout(resolve, 10000));
         attempts++;
       }
@@ -74,7 +74,7 @@ export const ensurePineconeIndexExists = async () => {
       err?.message?.includes("already exists") ||
       err?.message?.includes("ALREADY_EXISTS")
     ) {
-      console.log(`✅ Index already exists: ${indexName}`);
+      console.log(`Index already exists: ${indexName}`);
     } else {
       throw err;
     }
@@ -85,7 +85,7 @@ export const getPineconeIndex = () => pinecone.index(indexName);
 
 export const generateEmbedding = async (text) => {
   try {
-    console.log(`🔄 Generating embedding for: "${text.substring(0, 50)}..."`);
+    console.log(`Generating embedding for: "${text.substring(0, 50)}..."`);
     const response = await pinecone.inference.embed(
       "llama-text-embed-v2",
       [text],
@@ -97,11 +97,11 @@ export const generateEmbedding = async (text) => {
     }
 
     console.log(
-      `✅ Generated embedding with ${response.data[0].values.length} dimensions`
+      `Generated embedding with ${response.data[0].values.length} dimensions`
     );
     return response.data[0].values;
   } catch (error) {
-    console.error("❌ Error generating embedding:", error.message);
+    console.error("Error generating embedding:", error.message);
     throw error;
   }
 };
@@ -127,29 +127,34 @@ export const upsertTextWithEmbedding = async (
       },
     ]);
 
-    console.log(`✅ Upserted record with ID: ${id}`);
+    console.log(`Upserted record with ID: ${id}`);
   } catch (error) {
-    console.error(`❌ Error upserting record ${id}:`, error.message);
+    console.error(`Error upserting record ${id}:`, error.message);
     throw error;
   }
 };
 
 // Convenience function to query with text
-export const queryWithText = async (queryText, topK = 5) => {
+export const queryWithText = async (queryText, topK = 5, userId = null) => {
   try {
     const index = getPineconeIndex();
     const queryEmbedding = await generateEmbedding(queryText);
 
-    const results = await index.query({
+    const queryObj = {
       topK: topK,
       vector: queryEmbedding,
       includeMetadata: true,
-    });
+    };
+    if (userId) {
+      queryObj.filter = { userId };
+    }
 
-    console.log(`✅ Query completed, found ${results.matches.length} matches`);
+    const results = await index.query(queryObj);
+
+    console.log(`Query completed, found ${results.matches.length} matches`);
     return results;
   } catch (error) {
-    console.error("❌ Error querying:", error.message);
+    console.error("Error querying:", error.message);
     throw error;
   }
 };
@@ -158,7 +163,7 @@ export const queryWithText = async (queryText, topK = 5) => {
 export const checkIndexStatus = async () => {
   try {
     const indexStats = await pinecone.describeIndex(indexName);
-    console.log("📊 Index Status:", {
+    console.log("Index Status:", {
       name: indexStats.name,
       dimension: indexStats.dimension,
       metric: indexStats.metric,
@@ -166,13 +171,13 @@ export const checkIndexStatus = async () => {
     });
     return indexStats;
   } catch (error) {
-    console.error("❌ Error checking index status:", error.message);
+    console.error("Error checking index status:", error.message);
     throw error;
   }
 };
 
-export const getSimilarMessages = async (text, topK = 5) => {
-  const result = await queryWithText(text, topK);
+export const getSimilarMessages = async (text, topK = 5,userId = null) => {
+  const result = await queryWithText(text, topK,userId);
   const matches = result.matches || [];
 
   // Extract only the relevant parts (e.g., the text and score)
@@ -182,4 +187,22 @@ export const getSimilarMessages = async (text, topK = 5) => {
   }));
 
   return similarMessages;
+};
+
+
+export const upsertIfNotSimilar = async (userId, text, threshold = 0.8) => {
+  // Query for similar messages for this user
+  const results = await queryWithText(text, 3, userId);
+  const matches = results.matches || [];
+  const highScore = matches.find(m => m.score >= threshold);
+
+  if (highScore) {
+    // Found a similar message, do not upsert
+    return { upserted: false, similarMessages: matches };
+  } else {
+    // No similar message, upsert new embedding
+    const id = `${userId}-${Date.now()}`;
+    await upsertTextWithEmbedding(id, text, { userId });
+    return { upserted: true, similarMessages: [] };
+  }
 };

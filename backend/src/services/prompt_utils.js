@@ -4,7 +4,8 @@ export function buildSystemPrompt({
   redisChatHistory = [],
   similarMessages = [],
   currentMessage,
-}) {
+}) 
+{
   const formattedChat = Array.isArray(redisChatHistory)
     ? redisChatHistory.map((m) => `• (${m.role}) ${m.content}`).join("\n")
     : "";

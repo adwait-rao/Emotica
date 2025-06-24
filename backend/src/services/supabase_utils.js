@@ -8,7 +8,7 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🆕 UPSERT full chat history for a user
+//UPSERT full chat history for a user
 export async function upsertUserChat(userId, sessionId, chatHistory) {
   const { error } = await supabase.from("chat_sessions").upsert(
     [
@@ -22,9 +22,9 @@ export async function upsertUserChat(userId, sessionId, chatHistory) {
   );
 
   if (error) {
-    console.error("❌ Error upserting to Supabase:", error);
+    console.error("Error upserting to Supabase:", error);
   } else {
-    console.log("✅ Chat history upserted to Supabase");
+    console.log("Chat history upserted to Supabase");
   }
 }
 
@@ -37,7 +37,7 @@ export async function loadAllUserMessages(userId) {
     .single();
 
   if (error && error.code !== "PGRST116") {
-    console.error("❌ Error loading user chat:", error);
+    console.error("Error loading user chat:", error);
     return [];
   }
 
