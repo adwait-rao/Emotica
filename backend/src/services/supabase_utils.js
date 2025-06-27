@@ -9,6 +9,7 @@ const supabase = createClient(
 );
 
 //UPSERT full chat history for a user
+
 export async function upsertUserChat(userId, sessionId, messages) {
    if (!messages || messages.length === 0) {
     console.log('No messages to upsert');
@@ -35,13 +36,24 @@ export async function upsertUserChat(userId, sessionId, messages) {
   if (error) {
     console.error('Error upserting messages:', error);
     throw error;
+
   }
 
   console.log(`✅ Upserted ${messagesToInsert.length} messages`);
   return data;
 }
 
+export async function createSession(userId) {
+  const sessionId = uuidv4();
+  await supabase.from("sessions").insert({
+    id: sessionId,
+    user_id: userId,
+  });
+  return sessionId;
+}
+
 // Load user's messages (if any)
+
 export async function loadAllUserMessages(userId) {
   try {
     const { data, error } = await supabase
