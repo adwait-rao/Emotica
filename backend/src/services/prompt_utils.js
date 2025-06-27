@@ -6,13 +6,22 @@ export function buildSystemPrompt({
   currentMessage,
 }) 
 {
-  const formattedChat = Array.isArray(redisChatHistory)
-    ? redisChatHistory.map((m) => `• (${m.role}) ${m.content}`).join("\n")
-    : "";
+  const safeRedisHistory = Array.isArray(redisChatHistory) ? redisChatHistory : [];
+  const safeSimilarMessages = Array.isArray(similarMessages) ? similarMessages : [];
+  
+  console.log("🔍 buildSystemPrompt inputs:");
+  console.log("  - redisChatHistory:", safeRedisHistory.length, "messages");
+  console.log("  - similarMessages:", safeSimilarMessages.length, "messages");
+  console.log("  - currentMessage:", currentMessage);
 
-  const formattedSimilar = Array.isArray(similarMessages)
-    ? similarMessages.map((m) => `• ${m.content}`).join("\n")
-    : "";
+   const formattedChat = safeRedisHistory
+    .map((m) => `• (${m.role || 'unknown'}) ${m.content || ''}`)
+    .join("\n");
+
+  const formattedSimilar = safeSimilarMessages
+    .map((m) => `• ${m.text || m.content || ''}`)
+    .join("\n");
+
 
   const currentDate = dayjs().toISOString();
 

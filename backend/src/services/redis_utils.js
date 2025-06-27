@@ -1,4 +1,5 @@
 import { createClient } from "redis";
+import { v4 as uuidv4 } from "uuid";
 
 const redisClient = createClient({
   username: "default",
@@ -18,30 +19,91 @@ const getChatKey = (userId) => `chat:${userId}`;
 // Store new message into Redis
 export async function storeMessage(userId, role, content) {
   const key = getChatKey(userId);
-  const message = JSON.stringify({
+  const message = {
+    id: uuidv4(),
     role,
     content,
-    timestamp: new Date().toISOString(),
-  });
-  await redisClient.rPush(key, message);
+    created_at: new Date().toISOString(), // ✅ Use created_at consistently
+  };
+  
+  await redisClient.rPush(key, JSON.stringify(message));
+  return message; 
 }
 
 // Retrieve entire user chat from Redis
 export async function getChatHistory(userId) {
-  const key = getChatKey(userId);
-  const messages = await redisClient.lRange(key, 0, -1);
-  return messages.map(JSON.parse);
+   try {
+    const key = getChatKey(userId);
+    const messages = await redisClient.lRange(key, 0, -1);
+    console.log("🔍 Raw messages from Redis:", messages); // DEBUG
+
+    if (!messages || messages.length === 0) {
+      console.log("🔍 No messages in Redis for user:", userId);
+      return []; // ✅ Always return empty array, not null
+    }
+    
+    const parsedMessages = messages
+      .map(msg => {
+        try {
+          return JSON.parse(msg);
+        } catch (parseError) {
+          console.error("❌ Failed to parse message:", msg, parseError);
+          return null;
+        }
+      })
+      .filter(msg => msg !== null) // Remove failed parses
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    
+    console.log("🔍 Parsed and sorted messages:", parsedMessages);
+    return parsedMessages;
+      
+  } catch (error) {
+    console.error("Error in getChatHistory:", error);
+    return []; // ✅ Always return array on error
+  }
 }
 
 // Load all past Supabase messages into Redis
 export async function preloadChatHistory(userId, allMessages) {
-  const key = getChatKey(userId);
-  if (allMessages.length) {
+ try {
+    const key = getChatKey(userId);
+    
+    // ✅ Ensure allMessages is an array
+    if (!Array.isArray(allMessages)) {
+      console.log("⚠️ allMessages is not an array:", typeof allMessages);
+      return;
+    }
+    
+    if (allMessages.length === 0) {
+      console.log("🔍 No messages to preload for user:", userId);
+      return;
+    }
+    
+    console.log(`🔍 Preloading ${allMessages.length} messages to Redis`);
+    
     const pipeline = redisClient.multi();
-    allMessages.forEach((msg) => {
-      pipeline.rPush(key, JSON.stringify(msg));
+    
+    allMessages.forEach((msg, index) => {
+      try {
+        // ✅ Ensure every message has the complete schema
+        const normalizedMessage = {
+          id: msg.id || uuidv4(),
+          role: msg.role,
+          content: msg.content,
+          created_at: msg.created_at || new Date().toISOString(),
+        };
+        
+        pipeline.rPush(key, JSON.stringify(normalizedMessage));
+      } catch (msgError) {
+        console.error(`❌ Error processing message ${index}:`, msgError);
+      }
     });
+    
     await pipeline.exec();
+    console.log(`✅ Successfully preloaded ${allMessages.length} messages`);
+    
+  } catch (error) {
+    console.error("❌ Error in preloadChatHistory:", error);
   }
 }
 

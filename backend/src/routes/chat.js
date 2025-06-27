@@ -18,6 +18,7 @@ import { getSimilarMessages,upsertIfNotSimilar } from "../services/pineconeServi
 import { ChatOpenAI } from "@langchain/openai";
 import { v4 as uuidv4 } from "uuid";
 import { format } from "date-fns";
+import { buildSystemPrompt } from "../services/prompt_utils.js";
 
 import { z } from "zod";
 import {
@@ -51,34 +52,30 @@ const parser = StructuredOutputParser.fromNamesAndDescriptions({
   reply: "Supportive response to the user",
 });
 
-function buildSystemPrompt(chatHistory, similarMessages, currentMessage) {
-  const formattedChat = chatHistory
-    .map((m) => `• (${m.role}) ${m.content}`)
-    .join("\n");
-  const formattedSimilar = similarMessages
-    .map((m) => `• ${m.content}`)
-    .join("\n");
-  const currentDate = format(new Date(), "yyyy-MM-dd'T'HH:mm:ss");
+// function buildSystemPrompt(chatHistory, similarMessages, currentMessage) {
+//   const formattedChat = chatHistory.map((m) => `• (${m.role}) ${m.content}`).join("\n");
+//   const formattedSimilar = similarMessages.map((m) => `• ${m.content}`).join("\n");
+//   const currentDate = format(new Date(), "yyyy-MM-dd'T'HH:mm:ss");
 
-  return `
-You are a compassionate, emotionally aware mental health companion AI, Reply appropriately, based strictly on the current message,Chat History and similar Past messages.
+//   return `
+// You are a compassionate, emotionally aware mental health companion AI, Reply appropriately, based strictly on the current message,Chat History and similar Past messages.
 
-Chat History:
-${formattedChat || "No chat history."}
+// Chat History:
+// ${formattedChat || "No chat history."}
 
-Similar Past Messages:
-${formattedSimilar || "None found."}
+// Similar Past Messages:
+// ${formattedSimilar || "None found."}
 
-User just sent:
-"${currentMessage}"
+// User just sent:
+// "${currentMessage}"
 
-+ Return only the raw JSON object with no markdown, no explanation, and no code block. Do NOT wrap the output in backticks.
+// + Return only the raw JSON object with no markdown, no explanation, and no code block. Do NOT wrap the output in backticks.
 
-${parser.getFormatInstructions()}
+// ${parser.getFormatInstructions()}
 
-Use ${currentDate} as the reference for resolving dates like "tomorrow".
-`.trim();
-}
+// Use ${currentDate} as the reference for resolving dates like "tomorrow".
+// `.trim();
+// }
 
 
 router.post("/chat", async (req, res) => {
@@ -91,18 +88,27 @@ router.post("/chat", async (req, res) => {
 
     if (!isSessionActive) {
       const pastMessages = await loadAllUserMessages(userId);
+      console.log("🔍 Past messages from DB:", pastMessages); // DEBUG
+      console.log("🔍 Past messages type:", typeof pastMessages); // DEBUG
+      console.log("🔍 Past messages is array:", Array.isArray(pastMessages)); // DEBUG
+      
       await preloadChatHistory(userId, pastMessages);
       await setSessionStatus(userId);
     }
 
     const chatHistory = await getChatHistory(userId);
+    console.log("🔍 Chat history from Redis:", chatHistory); // DEBUG
+    console.log("🔍 Chat history type:", typeof chatHistory); // DEBUG
+    console.log("🔍 Chat history is array:", Array.isArray(chatHistory)); // DEBUG
     // Only fetch similar messages for prompt, not for upsert logic
     const similarMessages = await getSimilarMessages(currentMessage, 3,userId);
-    const systemPrompt = buildSystemPrompt(
-      chatHistory,
-      similarMessages,
-      currentMessage
-    );
+    console.log("🔍 Similar messages:", similarMessages); // DEBUG
+
+    const systemPrompt = buildSystemPrompt({
+      redisChatHistory: Array.isArray(chatHistory) ? chatHistory : [],
+      similarMessages: Array.isArray(similarMessages) ? similarMessages : [],
+      currentMessage: currentMessage,
+    });
 
     const result = await openai.invoke([
       { role: "system", content: systemPrompt },
@@ -137,15 +143,15 @@ console.log(similarMessages)
     return res.json(parsedResponse);
   } catch (err) {
     console.error("Chat Error:", err);
-    return res
-      .status(500)
-      .json({ error: "Server error", details: err.message });
+    return res.status(500).json({ error: "Server error", details: err.message });
   }
 });
+
+
 router.get("/chat/history", async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
-
+console.log(userId)
   try {
     let history = await getChatHistory(userId);
 

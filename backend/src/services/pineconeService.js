@@ -177,16 +177,24 @@ export const checkIndexStatus = async () => {
 };
 
 export const getSimilarMessages = async (text, topK = 5,userId = null) => {
-  const result = await queryWithText(text, topK,userId);
-  const matches = result.matches || [];
+   try {
+    const result = await queryWithText(text, topK, userId);
+    const matches = result.matches || [];
 
-  // Extract only the relevant parts (e.g., the text and score)
-  const similarMessages = matches.map((match) => ({
-    text: match.metadata?.chunk_text || "",
-    score: match.score,
-  }));
+    // ✅ Extract only the relevant parts and ensure array format
+    const similarMessages = matches.map((match) => ({
+      text: match.metadata?.chunk_text || "",
+      score: match.score,
+      content: match.metadata?.chunk_text || "", // Add content field for compatibility
+    }));
 
-  return similarMessages;
+    console.log(`🔍 Found ${similarMessages.length} similar messages`);
+    return similarMessages; // ✅ Always returns an array
+
+  } catch (error) {
+    console.error("❌ Error in getSimilarMessages:", error);
+    return []; // ✅ Always return an array even on error
+  }
 };
 
 

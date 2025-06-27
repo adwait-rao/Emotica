@@ -22,6 +22,7 @@
     "@pinecone-database/pinecone": "^6.1.1",
     "@supabase/supabase-js": "^2.50.0",
     "date-fns": "^4.1.0",
+    "dayjs": "^1.11.13",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "langchain": "^0.3.29",
