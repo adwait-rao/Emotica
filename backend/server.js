@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import chatRoutes from "./src/routes/chat.js";
-
+import "./src/scheduler/notifications.js";
 dotenv.config();
 const PORT = process.env.PORT || 3000;
 const app = express();

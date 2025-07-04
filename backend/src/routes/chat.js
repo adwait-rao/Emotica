@@ -1,5 +1,4 @@
 import express from "express";
-
 import {
   storeMessage,
   getChatHistory,
@@ -8,18 +7,16 @@ import {
   getSessionStatus,
   clearUserSession,
 } from "../services/redis_utils.js";
-
 import {
   upsertUserChat,
+  upsertSingleMessage,
   loadAllUserMessages,
+  getOrCreateSession,
 } from "../services/supabase_utils.js";
-
-import { getSimilarMessages,upsertIfNotSimilar } from "../services/pineconeService.js";
+import { createEventWithMessage } from "../services/events_utils.js";
+import { getSimilarMessages, upsertIfNotSimilar } from "../services/pineconeService.js";
 import { ChatOpenAI } from "@langchain/openai";
-import { v4 as uuidv4 } from "uuid";
-import { format } from "date-fns";
-import { buildSystemPrompt } from "../services/prompt_utils.js";
-
+import { buildSystemPrompt, buildEventCategorizationPrompt } from "../services/prompt_utils.js";
 import { z } from "zod";
 import {
   StructuredOutputParser,
@@ -30,53 +27,50 @@ const router = express.Router();
 
 const openai = new ChatOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
-  modelName: "gpt-4o", 
+  modelName: "gpt-4o",
   temperature: 0.7,
 });
 
-//Define expected response structure
-const baseParser = StructuredOutputParser.fromZodSchema(
-  z.object({
-    is_important: z.enum(["yes", "no"]),
-    is_event: z.enum(["yes", "no"]),
-    event_date: z.string().nullable(),
-    event_summary: z.string().nullable(),
-    reply: z.string(),
-  })
-);
-const parser = StructuredOutputParser.fromNamesAndDescriptions({
-  is_important: "yes | no",
-  is_event: "yes | no",
-  event_date: "ISO date string or null",
-  event_summary: "Brief summary of the event or null",
-  reply: "Supportive response to the user",
-});
-
-// function buildSystemPrompt(chatHistory, similarMessages, currentMessage) {
-//   const formattedChat = chatHistory.map((m) => `• (${m.role}) ${m.content}`).join("\n");
-//   const formattedSimilar = similarMessages.map((m) => `• ${m.content}`).join("\n");
-//   const currentDate = format(new Date(), "yyyy-MM-dd'T'HH:mm:ss");
-
-//   return `
-// You are a compassionate, emotionally aware mental health companion AI, Reply appropriately, based strictly on the current message,Chat History and similar Past messages.
-
-// Chat History:
-// ${formattedChat || "No chat history."}
-
-// Similar Past Messages:
-// ${formattedSimilar || "None found."}
-
-// User just sent:
-// "${currentMessage}"
-
-// + Return only the raw JSON object with no markdown, no explanation, and no code block. Do NOT wrap the output in backticks.
-
-// ${parser.getFormatInstructions()}
-
-// Use ${currentDate} as the reference for resolving dates like "tomorrow".
-// `.trim();
-// }
-
+// Enhanced function to categorize events using OpenAI
+async function categorizeEventWithOpenAI(eventSummary, eventDate, userMessage) {
+  try {
+    const prompt = buildEventCategorizationPrompt(eventSummary, eventDate, userMessage);
+    
+    const result = await openai.invoke([
+      { role: "system", content: prompt },
+    ]);
+    
+    const rawOutput = result.content;
+    const cleanOutput = rawOutput.replace(/```json|```/g, "").trim();
+    
+    let parsedCategory;
+    try {
+      parsedCategory = JSON.parse(cleanOutput);
+    } catch (error) {
+      console.error("❌ Failed to parse event categorization:", error);
+      // Fallback to simple categorization
+      parsedCategory = {
+        category: "reminder",
+        priority: "medium",
+        notification_schedule: ["same_day"],
+        description: eventSummary || "Event reminder"
+      };
+    }
+    
+    console.log("🎯 Event categorized:", parsedCategory);
+    return parsedCategory;
+    
+  } catch (error) {
+    console.error("❌ Error in OpenAI event categorization:", error);
+    // Fallback to simple categorization
+    return {
+      category: "reminder",
+      priority: "medium",
+      notification_schedule: ["same_day"],
+      description: eventSummary || "Event reminder"
+    };
+  }
+}
 
 router.post("/chat", async (req, res) => {
   const { message: currentMessage, userId } = req.body;
@@ -84,30 +78,24 @@ router.post("/chat", async (req, res) => {
     return res.status(400).send({ error: "Missing message or userId" });
 
   try {
-    const isSessionActive = await getSessionStatus(userId);
+    // 1. Get or create session
+    const sessionId = await getOrCreateSession(userId);
 
-    if (!isSessionActive) {
-      const pastMessages = await loadAllUserMessages(userId);
-      console.log("🔍 Past messages from DB:", pastMessages); // DEBUG
-      console.log("🔍 Past messages type:", typeof pastMessages); // DEBUG
-      console.log("🔍 Past messages is array:", Array.isArray(pastMessages)); // DEBUG
-      
-      await preloadChatHistory(userId, pastMessages);
-      await setSessionStatus(userId);
-    }
+    // 2. Store user message in Redis
+    const userMessageData = await storeMessage(userId, "user", currentMessage);
 
+    // 3. Immediately sync user message to Supabase
+    await upsertSingleMessage(userId, sessionId, userMessageData);
+
+    // 4. Get chat history and similar messages
     const chatHistory = await getChatHistory(userId);
-    console.log("🔍 Chat history from Redis:", chatHistory); // DEBUG
-    console.log("🔍 Chat history type:", typeof chatHistory); // DEBUG
-    console.log("🔍 Chat history is array:", Array.isArray(chatHistory)); // DEBUG
-    // Only fetch similar messages for prompt, not for upsert logic
-    const similarMessages = await getSimilarMessages(currentMessage, 3,userId);
-    console.log("🔍 Similar messages:", similarMessages); // DEBUG
+    const similarMessages = await getSimilarMessages(currentMessage, 3, userId);
 
+    // 5. Build system prompt and get AI response
     const systemPrompt = buildSystemPrompt({
       redisChatHistory: Array.isArray(chatHistory) ? chatHistory : [],
       similarMessages: Array.isArray(similarMessages) ? similarMessages : [],
-      currentMessage: currentMessage,
+      currentMessage,
     });
 
     const result = await openai.invoke([
@@ -115,31 +103,86 @@ router.post("/chat", async (req, res) => {
     ]);
     const rawOutput = result.content;
     const cleanOutput = rawOutput.replace(/```json|```/g, "").trim();
-    const parsedResponse = JSON.parse(cleanOutput);
 
-    await storeMessage(userId, "user", currentMessage);
-    await storeMessage(userId, "assistant", parsedResponse.reply);
+    let parsedResponse;
+    try {
+      parsedResponse = JSON.parse(cleanOutput);
+    } catch (error) {
+      console.error("❌ Failed to parse AI response:", error);
+      parsedResponse = {
+        is_important: "no",
+        is_event: "no",
+        event_date: null,
+        event_summary: null,
+        reply: cleanOutput,
+      };
+    }
 
-    // Only upsert if important
+    // 6. Store assistant message in Redis
+    const assistantMessageData = await storeMessage(userId, "assistant", parsedResponse.reply);
+
+    // 7. Immediately sync assistant message to Supabase
+    await upsertSingleMessage(userId, sessionId, assistantMessageData);
+
+    // 8. Handle important messages - store in vector database
     if (parsedResponse.is_important === "yes") {
-      const { upserted, similarMessages: pineconeMatches } = await upsertIfNotSimilar(
-        userId,
-        currentMessage,
-        0.8
-      );
-      if (!upserted && pineconeMatches.length > 0) {
-        // Return similar messages if found
-        return res.json({
-          ...parsedResponse,
-          similarMessages: pineconeMatches.map(m => ({
-            text: m.metadata?.chunk_text,
-            score: m.score,
-          })),
-          info: "Similar message found, not upserted.",
-        });
+      try {
+        const { upserted, similarMessages: pineconeMatches } = await upsertIfNotSimilar(
+          userId,
+          currentMessage,
+          0.8
+        );
+        if (!upserted && pineconeMatches.length > 0) {
+          return res.json({
+            ...parsedResponse,
+            similarMessages: pineconeMatches.map((m) => ({
+              text: m.metadata?.chunk_text,
+              score: m.score,
+            })),
+            info: "Similar message found, not upserted.",
+          });
+        }
+      } catch (vectorError) {
+        console.error("❌ Error storing in vector DB:", vectorError);
+        // Continue execution even if vector storage fails
       }
     }
-console.log(similarMessages)
+
+    // 9. Create event if needed - AFTER both messages are in Supabase
+    if (parsedResponse.is_event === "yes" && parsedResponse.event_date) {
+      try {
+        // Use OpenAI to categorize the event
+        const eventCategory = await categorizeEventWithOpenAI(
+          parsedResponse.event_summary,
+          parsedResponse.event_date,
+          currentMessage
+        );
+
+        const eventResult = await createEventWithMessage(userId, sessionId, userMessageData, {
+          event_date: parsedResponse.event_date,
+          event_summary: parsedResponse.event_summary,
+          event_type: eventCategory.category,
+          priority: eventCategory.priority,
+          notification_schedule: eventCategory.notification_schedule,
+          description: eventCategory.description,
+        });
+        
+        console.log("✅ Event created successfully:", eventResult?.event?.[0]?.id);
+        
+        // Add event info to response
+        parsedResponse.event_created = {
+          id: eventResult?.event?.[0]?.id,
+          category: eventCategory.category,
+          priority: eventCategory.priority,
+          notification_schedule: eventCategory.notification_schedule
+        };
+        
+      } catch (eventError) {
+        console.error("❌ Failed to create event:", eventError);
+        // Continue execution even if event creation fails
+      }
+    }
+
     return res.json(parsedResponse);
   } catch (err) {
     console.error("Chat Error:", err);
@@ -147,11 +190,9 @@ console.log(similarMessages)
   }
 });
 
-
 router.get("/chat/history", async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
-console.log(userId)
   try {
     let history = await getChatHistory(userId);
 
