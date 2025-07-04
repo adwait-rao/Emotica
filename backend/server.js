@@ -1,6 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
 import chatRoutes from "./src/routes/chat.js";
+import authRoutes from "./src/routes/auth.js";
 
 dotenv.config();
 const PORT = process.env.PORT || 3000;
@@ -8,6 +9,7 @@ const app = express();
 app.use(express.json());
 
 app.use("/", chatRoutes);
+app.use('/auth', authRoutes);
 app.get("/", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
 });

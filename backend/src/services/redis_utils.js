@@ -42,17 +42,28 @@ export async function cacheSessionIdInRedis(userId, sessionId) {
 // 🧠 Store a single message
 export async function storeMessage(userId, role, content) {
   const key = getChatKey(userId);
-  const sessionId = await getSessionId(userId); // already set above;
+  let sessionId = await getSessionId(userId);
+
+  if (!sessionId) {
+    console.warn(
+      `⚠️ Session ID missing in Redis for ${userId}, trying to recover...`
+    );
+    // Optionally: load from Supabase or fail more gracefully
+    throw new Error(
+      `❌ Cannot store message — no active sessionId for user ${userId}`
+    );
+  }
 
   const message = {
     id: uuidv4(),
-    session_id: sessionId, // 🔗 store sessionId in each message
+    session_id: sessionId,
     role,
     content,
     created_at: new Date().toISOString(),
   };
 
   await redisClient.rPush(key, JSON.stringify(message));
+  console.log("✅ Message stored in Redis:", message);
   return message;
 }
 
@@ -129,7 +140,11 @@ export async function getSessionStatus(userId) {
 }
 
 export async function getSessionId(userId) {
-  return await redisClient.get(getSessionKey(userId));
+  const sessionId = await redisClient.get(getSessionKey(userId));
+  if (!sessionId) {
+    console.warn(`⚠️ No session ID found in Redis for user ${userId}`);
+  }
+  return sessionId;
 }
 
 export async function setSessionStatus(userId) {

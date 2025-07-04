@@ -1,12 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-
+import { supabase } from "../config/supabaseClient.js";
 dotenv.config();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
 export async function ensureSessionExists(userId, sessionId) {
   const { data, error } = await supabase
     .from("sessions")
@@ -83,7 +78,7 @@ export async function createSession(userId) {
     .insert([{ user_id: userId }])
     .select("id")
     .single(); // Get the inserted session's ID
-
+  console.log(data);
   if (error) {
     console.error("❌ Supabase session creation failed:", error);
     throw new Error("Failed to create session");
