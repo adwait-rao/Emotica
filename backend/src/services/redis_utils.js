@@ -13,117 +13,142 @@ const redisClient = createClient({
 redisClient.on("error", (err) => console.error("❌ Redis Client Error:", err));
 await redisClient.connect();
 
-// Single Redis key per user for all messages
+// Keys
 const getChatKey = (userId) => `chat:${userId}`;
+const getSessionKey = (userId) => `session_id:${userId}`;
+const getSessionActiveKey = (userId) => `session_active:${userId}`;
 
-// Store new message into Redis
-export async function storeMessage(userId, role, content) {
-  const key = getChatKey(userId);
-  const message = {
-    id: uuidv4(),
-    role,
-    content,
-    created_at: new Date().toISOString(), // ✅ Use created_at consistently
-  };
-  
-  await redisClient.rPush(key, JSON.stringify(message));
-  return message; 
+// ⏱️ TTL for Redis session (in seconds)
+const SESSION_TTL_SECONDS = 3600; // 1 hour
+
+// ✅ Get sessionId
+export async function getSessionIdOrFail(userId) {
+  const sessionId = await redisClient.get(getSessionKey(userId));
+  if (!sessionId) {
+    throw new Error(`❌ No active Redis session ID found for user ${userId}`);
+  }
+  return sessionId;
+}
+// ✅ Cache sessionId in Redis
+export async function cacheSessionIdInRedis(userId, sessionId) {
+  await redisClient.set(getSessionKey(userId), sessionId, {
+    EX: SESSION_TTL_SECONDS,
+  });
+  await redisClient.set(getSessionActiveKey(userId), "true", {
+    EX: SESSION_TTL_SECONDS,
+  });
 }
 
-// Retrieve entire user chat from Redis
+// 🧠 Store a single message
+export async function storeMessage(userId, role, content) {
+  const key = getChatKey(userId);
+  let sessionId = await getSessionId(userId);
+
+  if (!sessionId) {
+    console.warn(
+      `⚠️ Session ID missing in Redis for ${userId}, trying to recover...`
+    );
+    // Optionally: load from Supabase or fail more gracefully
+    throw new Error(
+      `❌ Cannot store message — no active sessionId for user ${userId}`
+    );
+  }
+
+  const message = {
+    id: uuidv4(),
+    session_id: sessionId,
+    role,
+    content,
+    created_at: new Date().toISOString(),
+  };
+
+  await redisClient.rPush(key, JSON.stringify(message));
+  console.log("✅ Message stored in Redis:", message);
+  return message;
+}
+
+// 📦 Get full chat history from Redis
 export async function getChatHistory(userId) {
-   try {
+  try {
     const key = getChatKey(userId);
     const messages = await redisClient.lRange(key, 0, -1);
-    console.log("🔍 Raw messages from Redis:", messages); // DEBUG
 
     if (!messages || messages.length === 0) {
-      console.log("🔍 No messages in Redis for user:", userId);
-      return []; // ✅ Always return empty array, not null
+      return [];
     }
-    
-    const parsedMessages = messages
-      .map(msg => {
+
+    return messages
+      .map((msg) => {
         try {
           return JSON.parse(msg);
-        } catch (parseError) {
-          console.error("❌ Failed to parse message:", msg, parseError);
+        } catch (err) {
+          console.error("❌ Failed to parse Redis message:", err);
           return null;
         }
       })
-      .filter(msg => msg !== null) // Remove failed parses
+      .filter((msg) => msg !== null)
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    
-    console.log("🔍 Parsed and sorted messages:", parsedMessages);
-    return parsedMessages;
-      
   } catch (error) {
     console.error("Error in getChatHistory:", error);
-    return []; // ✅ Always return array on error
+    return [];
   }
 }
 
-// Load all past Supabase messages into Redis
+// 🔄 Preload Supabase chat messages into Redis
 export async function preloadChatHistory(userId, allMessages) {
- try {
+  try {
     const key = getChatKey(userId);
-    
-    // ✅ Ensure allMessages is an array
-    if (!Array.isArray(allMessages)) {
-      console.log("⚠️ allMessages is not an array:", typeof allMessages);
-      return;
-    }
-    
-    if (allMessages.length === 0) {
-      console.log("🔍 No messages to preload for user:", userId);
-      return;
-    }
-    
-    console.log(`🔍 Preloading ${allMessages.length} messages to Redis`);
-    
+    if (!Array.isArray(allMessages) || allMessages.length === 0) return;
+
     const pipeline = redisClient.multi();
-    
-    allMessages.forEach((msg, index) => {
-      try {
-        // ✅ Ensure every message has the complete schema
-        const normalizedMessage = {
-          id: msg.id || uuidv4(),
-          role: msg.role,
-          content: msg.content,
-          created_at: msg.created_at || new Date().toISOString(),
-        };
-        
-        pipeline.rPush(key, JSON.stringify(normalizedMessage));
-      } catch (msgError) {
-        console.error(`❌ Error processing message ${index}:`, msgError);
-      }
+    const lastSessionId =
+      allMessages[allMessages.length - 1]?.session_id || uuidv4();
+
+    // Save session ID into Redis as the active session
+    await redisClient.set(getSessionKey(userId), lastSessionId, {
+      EX: SESSION_TTL_SECONDS,
     });
-    
+
+    allMessages.forEach((msg) => {
+      const normalized = {
+        id: msg.id || uuidv4(),
+        session_id: msg.session_id || lastSessionId,
+        role: msg.role,
+        content: msg.content,
+        created_at: msg.created_at || new Date().toISOString(),
+      };
+      pipeline.rPush(key, JSON.stringify(normalized));
+    });
+
     await pipeline.exec();
-    console.log(`✅ Successfully preloaded ${allMessages.length} messages`);
-    
+    console.log(`✅ Preloaded ${allMessages.length} messages to Redis`);
   } catch (error) {
     console.error("❌ Error in preloadChatHistory:", error);
   }
 }
 
-// Optional: Clear user's Redis cache
-export async function clearChat(userId) {
-  await redisClient.del(getChatKey(userId));
+// ❌ Clear user Redis data (chat + session state)
+export async function clearUserSession(userId) {
+  await redisClient.del(getChatKey(userId)); // chat
+  await redisClient.del(getSessionKey(userId)); // session ID
+  await redisClient.del(getSessionActiveKey(userId)); // session status
 }
 
+// ✅ Session Status Helpers
 export async function getSessionStatus(userId) {
-  return await redisClient.get(`session_active:${userId}`);
+  return await redisClient.get(getSessionActiveKey(userId));
+}
+
+export async function getSessionId(userId) {
+  const sessionId = await redisClient.get(getSessionKey(userId));
+  if (!sessionId) {
+    console.warn(`⚠️ No session ID found in Redis for user ${userId}`);
+  }
+  return sessionId;
 }
 
 export async function setSessionStatus(userId) {
-  // Optional: Set expiry to auto-clear stale sessions
-  return await redisClient.set(`session_active:${userId}`, "true", {
-    EX: 3600, // 1 hour
+  return await redisClient.set(getSessionActiveKey(userId), "true", {
+    EX: SESSION_TTL_SECONDS,
   });
-}
-
-export async function clearUserSession(userId) {
-  await clearChat(userId); // clears Redis chat messages
-  await redisClient.del(`session_active:${userId}`); // clears session flag
 }

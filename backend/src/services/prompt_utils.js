@@ -1,18 +1,10 @@
 import dayjs from "dayjs";
 
-export function buildSystemPrompt({
-  redisChatHistory = [],
-  similarMessages = [],
-  currentMessage,
-}) 
+export function buildSystemPrompt({redisChatHistory = [],similarMessages = [],currentMessage,}) 
 {
   const safeRedisHistory = Array.isArray(redisChatHistory) ? redisChatHistory : [];
   const safeSimilarMessages = Array.isArray(similarMessages) ? similarMessages : [];
   
-  console.log("🔍 buildSystemPrompt inputs:");
-  console.log("  - redisChatHistory:", safeRedisHistory.length, "messages");
-  console.log("  - similarMessages:", safeSimilarMessages.length, "messages");
-  console.log("  - currentMessage:", currentMessage);
 
    const formattedChat = safeRedisHistory
     .map((m) => `• (${m.role || 'unknown'}) ${m.content || ''}`)
