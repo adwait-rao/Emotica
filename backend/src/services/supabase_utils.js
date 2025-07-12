@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { supabase } from "../config/supabaseClient.js";
+import { encrypt, decrypt } from "./encryption.js";
 dotenv.config();
 
 export async function ensureSessionExists(userId, sessionId) {
@@ -8,7 +9,7 @@ export async function ensureSessionExists(userId, sessionId) {
     .select("id")
     .eq("id", sessionId)
     .single();
-    if (error && error.code === "PGRST116") {
+  if (error && error.code === "PGRST116") {
     // Session does not exist — create it
     const { error: insertErr } = await supabase.from("sessions").insert({
       id: sessionId,
@@ -30,45 +31,43 @@ export async function getOrCreateSession(userId) {
   try {
     // First, try to get the most recent active session
     const { data: existingSession, error: sessionError } = await supabase
-      .from('sessions')
-      .select('id')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
+      .from("sessions")
+      .select("id")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
       .limit(1)
       .single();
 
     if (existingSession && !sessionError) {
-      console.log('✅ Using existing session:', existingSession.id);
+      console.log("✅ Using existing session:", existingSession.id);
       return existingSession.id;
     }
 
     // Create new session if none exists
     const { data: newSession, error: createError } = await supabase
-      .from('sessions')
+      .from("sessions")
       .insert([{ user_id: userId }])
-      .select('id')
+      .select("id")
       .single();
 
     if (createError) {
-      console.error('❌ Error creating session:', createError);
+      console.error("❌ Error creating session:", createError);
       throw createError;
     }
 
-    console.log('✅ Created new session:', newSession.id);
+    console.log("✅ Created new session:", newSession.id);
     return newSession.id;
-
   } catch (error) {
-    console.error('❌ Exception in getOrCreateSession:', error);
+    console.error("❌ Exception in getOrCreateSession:", error);
     throw error;
   }
 }
-
 
 //UPSERT full chat history for a user
 
 export async function upsertUserChat(userId, sessionId, messages) {
   if (!messages || messages.length === 0) {
-    console.log('No messages to upsert');
+    console.log("No messages to upsert");
     return;
   }
 
@@ -77,7 +76,7 @@ export async function upsertUserChat(userId, sessionId, messages) {
     session_id: sessionId,
     user_id: userId,
     role: msg.role,
-    content: msg.content,
+    content: msg.encryptedContent ? msg.encryptedContent : encrypt(msg.content), // <-- FIXED
     created_at: msg.created_at,
   }));
 
@@ -98,29 +97,30 @@ export async function upsertUserChat(userId, sessionId, messages) {
 // NEW: Upsert single message to Supabase
 export async function upsertSingleMessage(userId, sessionId, message) {
   if (!message) {
-    console.log('No message to upsert');
+    console.log("No message to upsert");
     return;
   }
-
+  console.log(message.content, "content before encryption in redis");
+  const encrypted = encrypt(message.encryptedContent);
   const messageToInsert = {
     id: message.id,
     session_id: sessionId,
     user_id: userId,
     role: message.role,
-    content: message.content,
+    content: encrypted,
     created_at: message.created_at,
   };
 
   const { data, error } = await supabase
-    .from('mess')
+    .from("mess")
     .upsert([messageToInsert], {
-      onConflict: 'id',
-      ignoreDuplicates: false
+      onConflict: "id",
+      ignoreDuplicates: false,
     })
     .select();
 
   if (error) {
-    console.error('Error upserting single message:', error);
+    console.error("Error upserting single message:", error);
     throw error;
   }
 
@@ -204,7 +204,7 @@ export async function loadAllUserMessages(userId, sessionId = null) {
     const normalizedMessages = data.map((msg) => ({
       id: msg.id,
       role: msg.role,
-      content: msg.content,
+      content: decrypt(msg.content), // Decrypt content
       created_at: msg.created_at,
       session_id: msg.session_id,
     }));
@@ -221,20 +221,20 @@ export async function loadAllUserMessages(userId, sessionId = null) {
 export async function messageExists(messageId) {
   try {
     const { data, error } = await supabase
-      .from('mess')
-      .select('id')
-      .eq('id', messageId)
+      .from("mess")
+      .select("id")
+      .eq("id", messageId)
       .single();
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
-      console.error('❌ Error checking message existence:', error);
+    if (error && error.code !== "PGRST116") {
+      // PGRST116 = no rows returned
+      console.error("❌ Error checking message existence:", error);
       return false;
     }
 
     return !!data;
   } catch (error) {
-    console.error('❌ Exception in messageExists:', error);
+    console.error("❌ Exception in messageExists:", error);
     return false;
   }
 }
-

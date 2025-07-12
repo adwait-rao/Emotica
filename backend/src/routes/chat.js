@@ -21,9 +21,15 @@ import {
   getLatestOpenSession,
 } from "../services/supabase_utils.js";
 import { createEventWithMessage } from "../services/events_utils.js";
-import { getSimilarMessages, upsertIfNotSimilar } from "../services/pineconeService.js";
+import {
+  getSimilarMessages,
+  upsertIfNotSimilar,
+} from "../services/pineconeService.js";
 import { ChatOpenAI } from "@langchain/openai";
-import { buildSystemPrompt, buildEventCategorizationPrompt } from "../services/prompt_utils.js";
+import {
+  buildSystemPrompt,
+  buildEventCategorizationPrompt,
+} from "../services/prompt_utils.js";
 import { z } from "zod";
 import { format } from "date-fns";
 import { StructuredOutputParser } from "langchain/output_parsers";
@@ -49,11 +55,13 @@ const baseParser = StructuredOutputParser.fromZodSchema(
 // Enhanced function to categorize events using OpenAI
 async function categorizeEventWithOpenAI(eventSummary, eventDate, userMessage) {
   try {
-    const prompt = buildEventCategorizationPrompt(eventSummary, eventDate, userMessage);
+    const prompt = buildEventCategorizationPrompt(
+      eventSummary,
+      eventDate,
+      userMessage
+    );
 
-    const result = await openai.invoke([
-      { role: "system", content: prompt },
-    ]);
+    const result = await openai.invoke([{ role: "system", content: prompt }]);
 
     const rawOutput = result.content;
     const cleanOutput = rawOutput.replace(/```json|```/g, "").trim();
@@ -68,13 +76,12 @@ async function categorizeEventWithOpenAI(eventSummary, eventDate, userMessage) {
         category: "reminder",
         priority: "medium",
         notification_schedule: ["same_day"],
-        description: eventSummary || "Event reminder"
+        description: eventSummary || "Event reminder",
       };
     }
 
     console.log("🎯 Event categorized:", parsedCategory);
     return parsedCategory;
-
   } catch (error) {
     console.error("❌ Error in OpenAI event categorization:", error);
     // Fallback to simple categorization
@@ -82,21 +89,19 @@ async function categorizeEventWithOpenAI(eventSummary, eventDate, userMessage) {
       category: "reminder",
       priority: "medium",
       notification_schedule: ["same_day"],
-      description: eventSummary || "Event reminder"
+      description: eventSummary || "Event reminder",
     };
   }
 }
 
-
 // Helper function to validate UUID format
 function isValidUUID(uuid) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuid && typeof uuid === 'string' && uuid !== 'null' && uuidRegex.test(uuid);
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return (
+    uuid && typeof uuid === "string" && uuid !== "null" && uuidRegex.test(uuid)
+  );
 }
-
-
-
-
 
 async function ensureValidSession(userId) {
   try {
@@ -174,7 +179,9 @@ async function processMessage(userId, sessionId, currentMessage) {
       recentChatHistory
     );
 
-    console.log( `📊 Chat history: ${ fullChatHistory.length } total, using latest ${ recentChatHistory.length }`);
+    console.log(
+      `📊 Chat history: ${fullChatHistory.length} total, using latest ${recentChatHistory.length}`
+    );
     const similarMessages = await getSimilarMessages(currentMessage, 3, userId);
 
     // 4. Build system prompt and get AI response
@@ -183,10 +190,10 @@ async function processMessage(userId, sessionId, currentMessage) {
     try {
       // Try to use the imported buildSystemPrompt function
       systemPrompt = buildSystemPrompt({
-      redisChatHistory: recentChatHistory, // Pass filtered history
-      similarMessages,
-      currentMessage,
-    });
+        redisChatHistory: recentChatHistory, // Pass filtered history
+        similarMessages,
+        currentMessage,
+      });
     } catch (error) {
       // Fallback to local implementation
       // systemPrompt = buildSystemPromptFallback(chatHistory, similarMessages, currentMessage);
@@ -216,7 +223,11 @@ async function processMessage(userId, sessionId, currentMessage) {
     }
 
     // 6. Store assistant message in Redis
-    const assistantMessageData = await storeMessage(userId, "assistant", parsedResponse.reply);
+    const assistantMessageData = await storeMessage(
+      userId,
+      "assistant",
+      parsedResponse.reply
+    );
 
     // 7. Immediately sync assistant message to Supabase
     await upsertSingleMessage(userId, sessionId, assistantMessageData);
@@ -255,25 +266,32 @@ async function processMessage(userId, sessionId, currentMessage) {
           currentMessage
         );
 
-        const eventResult = await createEventWithMessage(userId, sessionId, userMessageData, {
-          event_date: parsedResponse.event_date,
-          event_summary: parsedResponse.event_summary,
-          event_type: eventCategory.category,
-          priority: eventCategory.priority,
-          notification_schedule: eventCategory.notification_schedule,
-          description: eventCategory.description,
-        });
+        const eventResult = await createEventWithMessage(
+          userId,
+          sessionId,
+          userMessageData,
+          {
+            event_date: parsedResponse.event_date,
+            event_summary: parsedResponse.event_summary,
+            event_type: eventCategory.category,
+            priority: eventCategory.priority,
+            notification_schedule: eventCategory.notification_schedule,
+            description: eventCategory.description,
+          }
+        );
 
-        console.log("✅ Event created successfully:", eventResult?.event?.[0]?.id);
+        console.log(
+          "✅ Event created successfully:",
+          eventResult?.event?.[0]?.id
+        );
 
         // Add event info to response
         parsedResponse.event_created = {
           id: eventResult?.event?.[0]?.id,
           category: eventCategory.category,
           priority: eventCategory.priority,
-          notification_schedule: eventCategory.notification_schedule
+          notification_schedule: eventCategory.notification_schedule,
         };
-
       } catch (eventError) {
         console.error("❌ Failed to create event:", eventError);
         // Continue execution even if event creation fails
@@ -288,13 +306,15 @@ async function processMessage(userId, sessionId, currentMessage) {
 }
 
 // 🟢 CHAT ENTRY POINT
-router.post("/chat", authenticate,chatRateLimiter, async (req, res) => {
+router.post("/chat", authenticate, chatRateLimiter, async (req, res) => {
   const { message: currentMessage } = req.body;
   const userId = req.user.id;
 
   // Validate input
   if (!currentMessage || !currentMessage.trim()) {
-    return res.status(400).json({ error: "Message is required and cannot be empty" });
+    return res
+      .status(400)
+      .json({ error: "Message is required and cannot be empty" });
   }
 
   try {
@@ -308,16 +328,17 @@ router.post("/chat", authenticate,chatRateLimiter, async (req, res) => {
 
     console.log("✅ Chat completed successfully");
     return res.json(response);
-
   } catch (err) {
     console.error("❌ Chat Error:", err);
     return res.status(500).json({
       error: "Server error",
-      details: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      details:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 });
-
 
 // Get chat history
 router.get("/chat/history", authenticate, async (req, res) => {
@@ -326,31 +347,30 @@ router.get("/chat/history", authenticate, async (req, res) => {
   try {
     console.log("📚 Fetching chat history for user:", userId);
 
-    // Clear Redis cache and reload from database
-    await clearUserSession(userId);
+    // Check if Redis already has chat history
+    let history = await getChatHistory(userId);
+    console.log("🔍 Redis history length:", history ? history.length : 0);
+    if (!history || history.length === 0) {
+      // If Redis is empty, load ALL messages from Supabase
+      const allMessages = await loadAllUserMessages(userId);
 
-    // Get the latest session
-    const sessionId = await getLatestOpenSession(userId);
+      // Preload all messages into Redis (decrypted)
+      await preloadChatHistory(userId, allMessages);
 
-    // if (!sessionId) {
-    //   return res.json({ userId, history: [] });
-    // }
+      // Now get from Redis (guaranteed decrypted)
+      history = await getChatHistory(userId);
+    }
 
-    // Load all messages for the user
-    const pastMessages = await loadAllUserMessages(userId, sessionId);
-
-    // Preload into Redis
-    await preloadChatHistory(userId, pastMessages);
-    await setSessionStatus(userId);
-
-    console.log(`✅ Loaded ${pastMessages.length} messages from history`);
-    return res.json({ userId, history: pastMessages });
-
+    // Always return the current Redis history (decrypted)
+    return res.json({ userId, history });
   } catch (err) {
     console.error("❌ History Fetch Error:", err);
     return res.status(500).json({
       error: "Failed to fetch history",
-      details: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      details:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 });
@@ -385,12 +405,14 @@ router.post("/end-session", authenticate, async (req, res) => {
 
     console.log("✅ Session ended successfully");
     return res.json({ message: "Session ended and saved successfully" });
-
   } catch (err) {
     console.error("❌ End Session Error:", err);
     return res.status(500).json({
       error: "Failed to end session",
-      details: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+      details:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Internal server error",
     });
   }
 });

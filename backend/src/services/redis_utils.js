@@ -1,5 +1,6 @@
 import { createClient } from "redis";
 import { v4 as uuidv4 } from "uuid";
+import { encrypt, decrypt } from "./encryption.js";
 
 const redisClient = createClient({
   username: "default",
@@ -41,24 +42,33 @@ export async function cacheSessionIdInRedis(userId, sessionId) {
 
 // 🧠 Store a single message
 export async function storeMessage(userId, role, content) {
+  if (typeof content !== "string") {
+    console.error(
+      `❌ Cannot store message — content is not a string:`,
+      content
+    );
+    throw new TypeError("Message content must be a string");
+  }
+
   const key = getChatKey(userId);
   let sessionId = await getSessionId(userId);
 
   if (!sessionId) {
-    console.warn(
-      `⚠️ Session ID missing in Redis for ${userId}, trying to recover...`
-    );
-    // Optionally: load from Supabase or fail more gracefully
+    console.warn(`⚠️ Session ID missing in Redis for ${userId}`);
     throw new Error(
       `❌ Cannot store message — no active sessionId for user ${userId}`
     );
   }
 
+  console.log(content, "content before encryption in redis");
+
+  const encryptedContent = encrypt(content);
+
   const message = {
     id: uuidv4(),
     session_id: sessionId,
     role,
-    content,
+    encryptedContent,
     created_at: new Date().toISOString(),
   };
 
@@ -80,7 +90,12 @@ export async function getChatHistory(userId) {
     return messages
       .map((msg) => {
         try {
-          return JSON.parse(msg);
+          const parsed = JSON.parse(msg);
+          if (parsed.encryptedContent) {
+            parsed.content = decrypt(parsed.encryptedContent);
+            delete parsed.encryptedContent;
+          }
+          return parsed;
         } catch (err) {
           console.error("❌ Failed to parse Redis message:", err);
           return null;
@@ -114,7 +129,7 @@ export async function preloadChatHistory(userId, allMessages) {
         id: msg.id || uuidv4(),
         session_id: msg.session_id || lastSessionId,
         role: msg.role,
-        content: msg.content,
+        content: decrypt(msg.content),
         created_at: msg.created_at || new Date().toISOString(),
       };
       pipeline.rPush(key, JSON.stringify(normalized));
