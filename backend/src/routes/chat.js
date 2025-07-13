@@ -7,9 +7,11 @@ import {
   preloadChatHistory,
   setSessionStatus,
   getSessionStatus,
+  getSessionKey,
   getSessionId,
   clearUserSession,
   cacheSessionIdInRedis,
+  redisClient,
 } from "../services/redis_utils.js";
 import {
   upsertUserChat,
@@ -33,7 +35,7 @@ import {
 import { z } from "zod";
 import { format } from "date-fns";
 import { StructuredOutputParser } from "langchain/output_parsers";
-
+const SESSION_TTL_SECONDS = 3600;
 const router = express.Router();
 
 const openai = new ChatOpenAI({
@@ -132,12 +134,15 @@ async function ensureValidSession(userId) {
         console.log("🔄 Found existing session:", sessionId);
       }
 
-      // Load past messages if any exist
-      const pastMessages = await loadAllUserMessages(userId, sessionId);
+      // ✅ ALWAYS load ENTIRE chat history (all sessions) at session start
+      console.log("📥 Loading ENTIRE chat history from Supabase...");
+      const allMessages = await loadAllUserMessages(userId); // No sessionId filter
 
-      if (pastMessages.length > 0) {
-        console.log(`📚 Preloading ${pastMessages.length} past messages`);
-        await preloadChatHistory(userId, pastMessages);
+      if (allMessages.length > 0) {
+        console.log(
+          `📚 Preloading ${allMessages.length} messages from ALL sessions`
+        );
+        await preloadChatHistory(userId, allMessages, sessionId);
       } else {
         console.log("📝 No past messages, caching session");
         await cacheSessionIdInRedis(userId, sessionId);
@@ -160,44 +165,37 @@ async function ensureValidSession(userId) {
   }
 }
 
-// Process message function - Enhanced version combining both approaches
+// ENHANCED: processMessage - Continue using Redis for active sessions
 async function processMessage(userId, sessionId, currentMessage) {
   try {
     // 1. Store user message in Redis first
     const userMessageData = await storeMessage(userId, "user", currentMessage);
-
+    console.log(userMessageData, "ugadibooo");
     // 2. Immediately sync user message to Supabase for real-time updates
     await upsertSingleMessage(userId, sessionId, userMessageData);
 
-    // 3. Get chat history and similar messages
+    // 3. Get chat history from Redis (should contain entire history)
     const fullChatHistory = await getChatHistory(userId);
 
-    // 📌 FILTER: Only take the latest 10 messages
+    // 📌 FILTER: Only take the latest 6 messages for AI context
     const recentChatHistory = fullChatHistory.slice(-6);
     console.log(
-      "🔍 Filtering chat history to latest 6 messages",
-      recentChatHistory
+      `🔍 Using latest 6 messages from ${fullChatHistory.length} total messages`
     );
 
-    console.log(
-      `📊 Chat history: ${fullChatHistory.length} total, using latest ${recentChatHistory.length}`
-    );
     const similarMessages = await getSimilarMessages(currentMessage, 3, userId);
 
     // 4. Build system prompt and get AI response
     let systemPrompt;
-
     try {
-      // Try to use the imported buildSystemPrompt function
       systemPrompt = buildSystemPrompt({
-        redisChatHistory: recentChatHistory, // Pass filtered history
+        redisChatHistory: recentChatHistory,
         similarMessages,
         currentMessage,
       });
     } catch (error) {
-      // Fallback to local implementation
-      // systemPrompt = buildSystemPromptFallback(chatHistory, similarMessages, currentMessage);
-      console.log("dont have buildSystemPromptFallback yet");
+      console.log("❌ buildSystemPrompt failed, using fallback");
+      throw error;
     }
 
     const result = await openai.invoke([
@@ -252,14 +250,12 @@ async function processMessage(userId, sessionId, currentMessage) {
         }
       } catch (vectorError) {
         console.error("❌ Error storing in vector DB:", vectorError);
-        // Continue execution even if vector storage fails
       }
     }
 
-    // 9. Create event if needed - AFTER both messages are in Supabase
+    // 9. Create event if needed
     if (parsedResponse.is_event === "yes" && parsedResponse.event_date) {
       try {
-        // Use OpenAI to categorize the event
         const eventCategory = await categorizeEventWithOpenAI(
           parsedResponse.event_summary,
           parsedResponse.event_date,
@@ -285,7 +281,6 @@ async function processMessage(userId, sessionId, currentMessage) {
           eventResult?.event?.[0]?.id
         );
 
-        // Add event info to response
         parsedResponse.event_created = {
           id: eventResult?.event?.[0]?.id,
           category: eventCategory.category,
@@ -294,7 +289,6 @@ async function processMessage(userId, sessionId, currentMessage) {
         };
       } catch (eventError) {
         console.error("❌ Failed to create event:", eventError);
-        // Continue execution even if event creation fails
       }
     }
 
@@ -340,29 +334,97 @@ router.post("/chat", authenticate, chatRateLimiter, async (req, res) => {
   }
 });
 
-// Get chat history
+// FIXED: Chat history endpoint - Always get from Redis during active session
 router.get("/chat/history", authenticate, async (req, res) => {
   const userId = req.user.id;
 
   try {
     console.log("📚 Fetching chat history for user:", userId);
 
-    // Check if Redis already has chat history
-    let history = await getChatHistory(userId);
-    console.log("🔍 Redis history length:", history ? history.length : 0);
-    if (!history || history.length === 0) {
-      // If Redis is empty, load ALL messages from Supabase
-      const allMessages = await loadAllUserMessages(userId);
+    // Check if we have an active session
+    const sessionId = await getSessionId(userId);
+    const isSessionActive = await getSessionStatus(userId);
 
-      // Preload all messages into Redis (decrypted)
-      await preloadChatHistory(userId, allMessages);
+    console.log("📊 Session status:", { sessionId, isSessionActive });
 
-      // Now get from Redis (guaranteed decrypted)
-      history = await getChatHistory(userId);
+    if (isSessionActive && sessionId) {
+      // ✅ ACTIVE SESSION: Get from Redis (should contain entire history)
+      console.log("🔥 Active session detected - retrieving from Redis");
+
+      const history = await getChatHistory(userId);
+
+      if (history && history.length > 0) {
+        // Group messages by session for better organization
+        // const sessionGroups = {};
+        // history.forEach((msg) => {
+        //   const msgSessionId = msg.session_id || "unknown";
+        //   if (!sessionGroups[msgSessionId]) {
+        //     sessionGroups[msgSessionId] = [];
+        //   }
+        //   sessionGroups[msgSessionId].push(msg);
+        // });
+
+        console.log(`✅ Returning ${history.length} messages from Redis`);
+        console.log(`📍 Current session: ${sessionId}`);
+
+        return res.json({
+          userId,
+          currentSessionId: sessionId,
+          history, // All messages in chronological order
+          totalMessages: history.length,
+          // sessionCount: Object.keys(sessionGroups).length,
+          // sessionGroups,
+          source: "redis", // Debug info
+        });
+      } else {
+        console.log(
+          "⚠️ Redis empty despite active session, falling back to Supabase"
+        );
+      }
     }
 
-    // Always return the current Redis history (decrypted)
-    return res.json({ userId, history });
+    // ✅ NO ACTIVE SESSION or Redis empty: Load from Supabase and create session
+    console.log("💾 No active session or Redis empty - loading from Supabase");
+
+    // Get or create session
+    let currentSessionId = await getLatestOpenSession(userId);
+    if (!currentSessionId) {
+      currentSessionId = await createSession(userId);
+      console.log("🆕 Created new session:", currentSessionId);
+    }
+
+    // Load ENTIRE history from Supabase
+    console.log("📥 Loading ALL messages from Supabase...");
+    const allMessages = await loadAllUserMessages(userId);
+
+    // Preload Redis with complete history
+    await preloadChatHistory(userId, allMessages, currentSessionId);
+
+    // Set session as active
+    await setSessionStatus(userId);
+
+    // Group messages by session
+    // const sessionGroups = {};
+    // allMessages.forEach((msg) => {
+    //   const msgSessionId = msg.session_id || "unknown";
+    //   if (!sessionGroups[msgSessionId]) {
+    //     sessionGroups[msgSessionId] = [];
+    //   }
+    //   sessionGroups[msgSessionId].push(msg);
+    // });
+
+    console.log(`✅ Returning ${allMessages.length} messages from Supabase`);
+    console.log(`📍 Current session: ${currentSessionId}`);
+
+    return res.json({
+      userId,
+      currentSessionId,
+      history: allMessages,
+      totalMessages: allMessages.length,
+      // sessionCount: Object.keys(sessionGroups).length,
+      // sessionGroups,
+      source: "supabase", // Debug info
+    });
   } catch (err) {
     console.error("❌ History Fetch Error:", err);
     return res.status(500).json({

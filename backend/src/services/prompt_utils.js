@@ -19,25 +19,19 @@ export function buildSystemPrompt({redisChatHistory = [],similarMessages = [],cu
 
   return `
 You are a compassionate and emotionally aware mental health companion AI Agent.
-
 Context You Have
 Current Chat History:
 ${formattedChat || "No chat history available."}
-
 Similar Past Messages:
 ${formattedSimilar || "No similar messages found."}
-
 Given the message:
 "${currentMessage}"
-
 Respond kindly, naturally and offer advice, like a mental health companion based on similar messages and Chat history(This is very important).
-
 Classify the message:
 is_important: Is it emotionally or contextually significant? Include messages with names and information about people too.
 is_event: Does it mention a specific time/date-based event?
 If it's an event:
 Extract event_date (ISO format) and a brief event_summary.
-
 Return only a JSON object with the following fields:
  {
    "is_important": "yes" | "no",
@@ -46,24 +40,20 @@ Return only a JSON object with the following fields:
    "event_summary": "..." | null,
    "reply": "Your supportive response to the user"
  }
-
 Use ${currentDate} as the reference for resolving dates like “tomorrow” or “next Monday.”
 `.trim();
 }
 
 export function buildEventCategorizationPrompt(eventSummary, eventDate, originalMessage) {
   const currentDate = dayjs().toISOString();
-  
+
   return `
 You are an AI assistant that categorizes events and determines appropriate notification schedules.
-
 Original Message: "${originalMessage}"
 Event Summary: "${eventSummary}"
 Event Date: "${eventDate}"
 Current Date: "${currentDate}"
-
 Analyze this event and categorize it appropriately. Consider:
-
 1. Event Categories:
    - "birthday" - birthdays, anniversaries, celebrations
    - "exam" - tests, exams, assessments, papers
@@ -76,12 +66,10 @@ Analyze this event and categorize it appropriately. Consider:
    - "work" - work tasks, meetings, presentations
    - "personal" - personal tasks, errands, chores
    - "reminder" - general reminders, miscellaneous
-
 2. Priority Levels:
    - "high" - critical, urgent, cannot be missed
    - "medium" - important, should not be missed
    - "low" - nice to remember, not critical
-
 3. Notification Schedule (when to notify):
    - "one_week_before" - 7 days before
    - "three_days_before" - 3 days before
@@ -90,7 +78,6 @@ Analyze this event and categorize it appropriately. Consider:
    - "same_day" - 2 hours before event
    - "one_hour_before" - 1 hour before
    - "thirty_minutes_before" - 30 minutes before
-
 Guidelines:
 - Birthdays: notify 1 day before and same day morning
 - Exams: notify 3 days before, 1 day before, and same day morning
@@ -103,7 +90,6 @@ Guidelines:
 - Work tasks: notify 1 day before and same day morning
 - Personal tasks: notify same day morning
 - General reminders: notify same day
-
 Return only a JSON object:
 {
   "category": "...",
