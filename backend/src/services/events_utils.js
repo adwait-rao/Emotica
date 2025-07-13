@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
-
+import notificationGenerator from "../scheduler/notificationGenerator.js"
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
@@ -14,6 +14,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // Constants
 const IST_TIMEZONE = 'Asia/Kolkata';
 const NOTIFICATION_BUFFER_MINUTES = 2;
+const MAX_NOTIFICATION_ENTRIES = 10;
 
 export function debugNotificationTimes(eventDate, notificationSchedule) {
   console.log("=== DEBUG NOTIFICATION TIMES ===");
@@ -115,13 +116,13 @@ export async function createEventWithMessage(userId, sessionId, messageData, eve
 
     // Create individual notification entries
     const eventId = eventResult[0].id;
-    const notificationEntries = await createNotificationEntries(
+    const notificationEntries = await notificationGenerator.generateNotificationsForEvent(
       eventId,
       userId,
       eventData.event_date,
-      eventData.notification_schedule || ['same_day'],
       eventData.event_summary,
       eventData.event_type,
+      eventData.notification_schedule || ['same_day'],
       eventData.priority
     );
 
@@ -139,42 +140,63 @@ export async function createEventWithMessage(userId, sessionId, messageData, eve
   }
 }
 
-function getAdaptiveSchedule(timeUntilEvent) {
-  if (timeUntilEvent <= 2) {
-    return ['five_minutes_before']; // Will be adjusted to immediate or 1 min
+function getAdaptiveSchedule(timeUntilEvent, eventType = 'reminder') {
+  // Priority-based scheduling for different event types
+  const urgentTypes = ['exam', 'appointment', 'medication', 'deadline'];
+  const isUrgent = urgentTypes.includes(eventType);
+  
+  if (timeUntilEvent <= 1) {
+    return ['immediate']; // Immediate notification
+  } else if (timeUntilEvent <= 3) {
+    return ['five_minutes_before'];
   } else if (timeUntilEvent <= 5) {
     return ['five_minutes_before'];
   } else if (timeUntilEvent <= 10) {
     return ['five_minutes_before'];
   } else if (timeUntilEvent <= 15) {
-    return ['five_minutes_before', 'fifteen_minutes_before'];
+    return isUrgent ? ['five_minutes_before', 'fifteen_minutes_before'] : ['fifteen_minutes_before'];
   } else if (timeUntilEvent <= 30) {
-    return ['fifteen_minutes_before'];
-  } else {
+    return isUrgent ? ['fifteen_minutes_before', 'thirty_minutes_before'] : ['thirty_minutes_before'];
+  } else if (timeUntilEvent <= 60) {
+    return isUrgent ? ['thirty_minutes_before', 'one_hour_before'] : ['one_hour_before'];
+  } else if (timeUntilEvent <= 120) {
+    return ['one_hour_before'];
+  } else if (timeUntilEvent <= 1440) { // Within 24 hours
     return ['same_day'];
+  } else {
+    return ['one_day_before'];
   }
 }
+
 
 function createFallbackNotification(eventId, userId, eventSummary, eventType, priority, now, timeUntilEvent) {
   let fallbackTime;
   let fallbackType;
   
-  if (timeUntilEvent <= 1) {
-    fallbackTime = now.add(30, 'second');
+  if (timeUntilEvent <= 0.5) {
+    fallbackTime = now.add(10, 'second');
     fallbackType = "immediate";
-    console.log("🚨 Event is within 1 minute - immediate notification");
+    console.log("🚨 Event is within 30 seconds - immediate notification");
+  } else if (timeUntilEvent <= 1) {
+    fallbackTime = now.add(30, 'second');
+    fallbackType = "urgent";
+    console.log("🚨 Event is within 1 minute - urgent notification");
+  } else if (timeUntilEvent <= 3) {
+    fallbackTime = now.add(1, 'minute');
+    fallbackType = "very_soon";
+    console.log("⚡ Event is within 3 minutes - very soon notification");
   } else if (timeUntilEvent <= 5) {
     fallbackTime = now.add(1, 'minute');
-    fallbackType = "urgent";
-    console.log("⚡ Event is within 5 minutes - urgent notification in 1 minute");
+    fallbackType = "soon";
+    console.log("⚡ Event is within 5 minutes - soon notification");
   } else if (timeUntilEvent <= 15) {
     fallbackTime = now.add(2, 'minute');
-    fallbackType = "soon";
-    console.log("⏰ Event is within 15 minutes - notification in 2 minutes");
+    fallbackType = "upcoming";
+    console.log("⏰ Event is within 15 minutes - upcoming notification");
   } else {
-    fallbackTime = now.add(5, 'minute');
+    fallbackTime = now.add(3, 'minute');
     fallbackType = "fallback";
-    console.log("📅 Standard fallback notification in 5 minutes");
+    console.log("📅 Standard fallback notification");
   }
   
   return {
@@ -186,92 +208,9 @@ function createFallbackNotification(eventId, userId, eventSummary, eventType, pr
     event_type: eventType,
     priority: priority,
     sent: false,
-    created_at: now.utc().toISOString()
+    created_at: now.utc().toISOString(),
+    event_date: null 
   };
-}
-
-async function createNotificationEntries(eventId, userId, eventDate, notificationSchedule, eventSummary, eventType, priority = 'medium') {
-  try {
-    const notificationEntries = [];
-    const now = dayjs().tz(IST_TIMEZONE);
-    const eventTime = dayjs(eventDate).tz(IST_TIMEZONE);
-    const timeUntilEvent = eventTime.diff(now, 'minute');
-    
-    // Enhanced buffer time calculation
-    const bufferTime = now.add(1, 'minute'); // Reduced buffer for better responsiveness
-    
-    console.log(`📊 Event analysis: ${timeUntilEvent} minutes until event`);
-    console.log(`⏰ Buffer time: ${bufferTime.format()}`);
-
-    // If event is very soon and no specific schedule, use adaptive scheduling
-    if (timeUntilEvent <= 30 && notificationSchedule.length === 0) {
-      console.log('🚨 Event is very soon with no schedule - using adaptive scheduling');
-      notificationSchedule = getAdaptiveSchedule(timeUntilEvent);
-    }
-
-    for (const scheduleType of notificationSchedule) {
-      const notificationTime = calculateNotificationTime(eventDate, scheduleType);
-
-      if (!notificationTime) {
-        console.log(`⚠️ Skipped ${scheduleType} - could not calculate time`);
-        continue;
-      }
-
-      const notificationTimeDayjs = dayjs(notificationTime).tz(IST_TIMEZONE);
-      
-      // More lenient time validation for very urgent events
-      const isValidTime = notificationTimeDayjs.isAfter(bufferTime) || 
-                         (timeUntilEvent <= 10 && notificationTimeDayjs.isAfter(now.subtract(30, 'second')));
-      
-      if (isValidTime) {
-        const notificationEntry = {
-          event_id: eventId,
-          user_id: userId,
-          notification_time: notificationTimeDayjs.utc().toISOString(),
-          notification_type: scheduleType,
-          event_summary: eventSummary,
-          event_type: eventType,
-          priority: priority,
-          sent: false,
-          created_at: now.utc().toISOString()
-        };
-
-        notificationEntries.push(notificationEntry);
-        console.log(`✅ Scheduled ${scheduleType} notification for ${notificationTimeDayjs.format()}`);
-      } else {
-        console.log(`⏳ Skipped ${scheduleType} - time already passed or too close (${notificationTimeDayjs.format()})`);
-      }
-    }
-
-    // Enhanced fallback logic
-    if (notificationEntries.length === 0) {
-      const fallbackNotification = createFallbackNotification(eventId, userId, eventSummary, eventType, priority, now, timeUntilEvent);
-      if (fallbackNotification) {
-        notificationEntries.push(fallbackNotification);
-      }
-    }
-
-    if (notificationEntries.length === 0) {
-      console.log('❌ No notifications could be scheduled');
-      return [];
-    }
-
-    const { data, error } = await supabase
-      .from("notifications")
-      .insert(notificationEntries)
-      .select();
-
-    if (error) {
-      console.error('❌ Error creating notification entries:', error);
-      throw error;
-    }
-
-    console.log(`✅ Successfully created ${data.length} notification entries`);
-    return data;
-  } catch (error) {
-    console.error('❌ Error in createNotificationEntries:', error);
-    throw error;
-  }
 }
 
 function calculateNotificationTime(eventDateTime, scheduleType) {
@@ -289,6 +228,10 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
     console.log(`⏱️ Time until event: ${timeUntilEvent} minutes`);
 
     switch (scheduleType) {
+      case 'immediate':
+        notificationTime = now.add(5, 'second');
+        break;
+
       case 'one_week_before':
         notificationTime = eventTime.subtract(7, 'day');
         break;
@@ -302,19 +245,20 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
         break;
 
       case 'same_day_morning':
-        // Set to 9 AM IST on the same day as the event
         notificationTime = eventTime.startOf('day').hour(9).minute(0).second(0);
+        // If event is before 9 AM, set for previous day
+        if (eventTime.hour() < 9) {
+          notificationTime = notificationTime.subtract(1, 'day');
+        }
         break;
 
       case 'same_day':
-        // Intelligent scheduling based on how much time is left
         notificationTime = calculateSameDayNotification(eventTime, now, timeUntilEvent);
         break;
 
       case 'one_hour_before':
-        // If event is less than 1 hour away, schedule for 50% of remaining time
         if (timeUntilEvent <= 60) {
-          const bufferMinutes = Math.max(5, Math.floor(timeUntilEvent * 0.5));
+          const bufferMinutes = Math.max(3, Math.floor(timeUntilEvent * 0.6));
           notificationTime = eventTime.subtract(bufferMinutes, 'minute');
           console.log(`⚡ Event too soon for 1 hour notice, scheduling ${bufferMinutes} minutes before`);
         } else {
@@ -323,9 +267,8 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
         break;
 
       case 'thirty_minutes_before':
-        // If event is less than 30 minutes away, schedule for 50% of remaining time
         if (timeUntilEvent <= 30) {
-          const bufferMinutes = Math.max(3, Math.floor(timeUntilEvent * 0.5));
+          const bufferMinutes = Math.max(2, Math.floor(timeUntilEvent * 0.6));
           notificationTime = eventTime.subtract(bufferMinutes, 'minute');
           console.log(`⚡ Event too soon for 30 min notice, scheduling ${bufferMinutes} minutes before`);
         } else {
@@ -334,9 +277,8 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
         break;
 
       case 'fifteen_minutes_before':
-        // If event is less than 15 minutes away, schedule for 50% of remaining time
         if (timeUntilEvent <= 15) {
-          const bufferMinutes = Math.max(2, Math.floor(timeUntilEvent * 0.5));
+          const bufferMinutes = Math.max(1, Math.floor(timeUntilEvent * 0.6));
           notificationTime = eventTime.subtract(bufferMinutes, 'minute');
           console.log(`⚡ Event too soon for 15 min notice, scheduling ${bufferMinutes} minutes before`);
         } else {
@@ -345,9 +287,8 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
         break;
 
       case 'five_minutes_before':
-        // If event is less than 5 minutes away, schedule for 50% of remaining time
         if (timeUntilEvent <= 5) {
-          const bufferMinutes = Math.max(1, Math.floor(timeUntilEvent * 0.5));
+          const bufferMinutes = Math.max(0.5, Math.floor(timeUntilEvent * 0.6));
           notificationTime = eventTime.subtract(bufferMinutes, 'minute');
           console.log(`⚡ Event too soon for 5 min notice, scheduling ${bufferMinutes} minutes before`);
         } else {
@@ -356,7 +297,7 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
         break;
 
       default:
-        // Default: use intelligent same_day calculation
+        console.log(`⚠️ Unknown schedule type: ${scheduleType}, using same_day logic`);
         notificationTime = calculateSameDayNotification(eventTime, now, timeUntilEvent);
         break;
     }
@@ -379,7 +320,9 @@ function calculateNotificationTime(eventDateTime, scheduleType) {
 function calculateSameDayNotification(eventTime, now, timeUntilEvent) {
   let notificationTime;
   
-  if (timeUntilEvent > 240) { // More than 4 hours away
+  if (timeUntilEvent > 480) { // More than 8 hours away
+    notificationTime = eventTime.subtract(4, 'hour');
+  } else if (timeUntilEvent > 240) { // 4-8 hours away
     notificationTime = eventTime.subtract(2, 'hour');
   } else if (timeUntilEvent > 120) { // 2-4 hours away
     notificationTime = eventTime.subtract(1, 'hour');
@@ -388,13 +331,15 @@ function calculateSameDayNotification(eventTime, now, timeUntilEvent) {
   } else if (timeUntilEvent > 30) { // 30-60 minutes away
     notificationTime = eventTime.subtract(15, 'minute');
   } else if (timeUntilEvent > 15) { // 15-30 minutes away
-    notificationTime = eventTime.subtract(10, 'minute');
+    notificationTime = eventTime.subtract(8, 'minute');
   } else if (timeUntilEvent > 10) { // 10-15 minutes away
     notificationTime = eventTime.subtract(5, 'minute');
   } else if (timeUntilEvent > 5) { // 5-10 minutes away
     notificationTime = eventTime.subtract(3, 'minute');
-  } else { // Less than 5 minutes away
-    notificationTime = eventTime.subtract(Math.max(1, Math.floor(timeUntilEvent * 0.5)), 'minute');
+  } else if (timeUntilEvent > 2) { // 2-5 minutes away
+    notificationTime = eventTime.subtract(1, 'minute');
+  } else { // Less than 2 minutes away
+    notificationTime = now.add(20, 'second');
   }
   
   console.log(`🎯 Same day notification: ${timeUntilEvent} mins until event → notify ${eventTime.diff(notificationTime, 'minute')} mins before`);
@@ -402,17 +347,17 @@ function calculateSameDayNotification(eventTime, now, timeUntilEvent) {
 }
 
 function getEmergencyNotificationTime(eventTime, now, timeUntilEvent) {
-  if (timeUntilEvent <= 1) {
-    // Event is within 1 minute, notify immediately
-    return now.add(10, 'second');
-  } else if (timeUntilEvent <= 5) {
-    // Event is within 5 minutes, notify 1 minute before
+  if (timeUntilEvent <= 0.5) {
+    return now.add(5, 'second');
+  } else if (timeUntilEvent <= 1) {
+    return now.add(15, 'second');
+  } else if (timeUntilEvent <= 3) {
     return eventTime.subtract(1, 'minute');
-  } else if (timeUntilEvent <= 10) {
-    // Event is within 10 minutes, notify 2 minutes before
+  } else if (timeUntilEvent <= 5) {
     return eventTime.subtract(2, 'minute');
+  } else if (timeUntilEvent <= 10) {
+    return eventTime.subtract(3, 'minute');
   } else {
-    // Fallback: notify 5 minutes before
     return eventTime.subtract(5, 'minute');
   }
 }
@@ -440,13 +385,13 @@ export async function createEventWithoutMessage(userId, eventData) {
     if (error) throw error;
 
     const eventId = data[0].id;
-    const notificationEntries = await createNotificationEntries(
+    const notificationEntries = await notificationGenerator.generateNotificationsForEvent(
       eventId,
       userId,
       eventData.event_date,
-      eventData.notification_schedule || ['same_day'],
       eventData.event_summary,
       eventData.event_type,
+      eventData.notification_schedule || ['same_day'],
       eventData.priority
     );
 
@@ -457,7 +402,7 @@ export async function createEventWithoutMessage(userId, eventData) {
   }
 }
 
-export async function getUpcomingNotifications(limitMinutes = 5) {
+export async function getUpcomingNotifications(limitMinutes = 10) {
   try {
     const now = dayjs().utc();
     const futureLimit = now.add(limitMinutes, 'minute');
@@ -472,12 +417,14 @@ export async function getUpcomingNotifications(limitMinutes = 5) {
           event_date,
           event_summary,
           event_type,
-          priority
+          priority,
+          user_id
         )
       `)
       .eq("sent", false)
       .lte("notification_time", futureLimit.toISOString())
       .gte("notification_time", now.subtract(NOTIFICATION_BUFFER_MINUTES, 'minute').toISOString())
+      .order("priority", { ascending: false })
       .order("notification_time", { ascending: true });
 
     if (error) {
@@ -497,10 +444,10 @@ export async function getUpcomingNotifications(limitMinutes = 5) {
     }).map(notification => ({
       ...notification,
       // Flatten the event data for backward compatibility
-      event_date: notification.events.event_date,
-      event_summary: notification.events.event_summary || notification.event_summary,
-      event_type: notification.events.event_type || notification.event_type,
-      priority: notification.events.priority || notification.priority
+      event_date: notification.event_date || notification.events.event_date,
+      event_summary: notification.event_summary || notification.events.event_summary,
+      event_type: notification.event_type || notification.events.event_type,
+      priority: notification.priority || notification.events.priority
     }));
 
     console.log(`📬 Found ${validNotifications.length} valid notifications to process`);
@@ -554,11 +501,96 @@ export function getTimeDifference(futureTime, currentTime = dayjs()) {
   const diffInHours = future.diff(current, 'hour');
   const diffInDays = future.diff(current, 'day');
   
-  if (diffInMinutes < 60) {
+  if (diffInMinutes < 1) {
+    return 'now';
+  } else if (diffInMinutes < 60) {
     return `${diffInMinutes} minute${diffInMinutes !== 1 ? 's' : ''}`;
   } else if (diffInHours < 24) {
     return `${diffInHours} hour${diffInHours !== 1 ? 's' : ''}`;
   } else {
     return `${diffInDays} day${diffInDays !== 1 ? 's' : ''}`;
+  }
+}
+
+export function getNotificationPriority(eventType, timeUntilEvent) {
+  const urgentTypes = ['exam', 'appointment', 'medication', 'deadline'];
+  const importantTypes = ['work', 'travel', 'birthday'];
+  
+  if (timeUntilEvent <= 5) {
+    return 'high';
+  } else if (urgentTypes.includes(eventType)) {
+    return 'high';
+  } else if (importantTypes.includes(eventType)) {
+    return 'medium';
+  } else {
+    return 'low';
+  }
+}
+
+export function validateNotificationSchedule(schedule, eventType) {
+  const validScheduleTypes = [
+    'immediate',
+    'five_minutes_before',
+    'fifteen_minutes_before',
+    'thirty_minutes_before',
+    'one_hour_before',
+    'same_day',
+    'same_day_morning',
+    'one_day_before',
+    'three_days_before',
+    'one_week_before'
+  ];
+  
+  return schedule.filter(type => validScheduleTypes.includes(type));
+}
+
+// Batch notification operations for efficiency
+export async function batchCreateNotifications(notifications) {
+  try {
+    if (!notifications || notifications.length === 0) {
+      return [];
+    }
+    
+    const { data, error } = await supabase
+      .from("notifications")
+      .insert(notifications)
+      .select();
+
+    if (error) {
+      console.error('❌ Error batch creating notifications:', error);
+      throw error;
+    }
+
+    console.log(`✅ Batch created ${data.length} notifications`);
+    return data;
+  } catch (error) {
+    console.error('❌ Error in batchCreateNotifications:', error);
+    throw error;
+  }
+}
+
+export async function batchMarkNotificationsAsSent(notificationIds) {
+  try {
+    if (!notificationIds || notificationIds.length === 0) {
+      return;
+    }
+    
+    const { error } = await supabase
+      .from("notifications")
+      .update({ 
+        sent: true, 
+        sent_at: dayjs().utc().toISOString() 
+      })
+      .in("id", notificationIds);
+
+    if (error) {
+      console.error('❌ Error batch marking notifications as sent:', error);
+      throw error;
+    }
+
+    console.log(`✅ Batch marked ${notificationIds.length} notifications as sent`);
+  } catch (error) {
+    console.error('❌ Error in batchMarkNotificationsAsSent:', error);
+    throw error;
   }
 }

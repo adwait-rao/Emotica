@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
+import { jwtVerify } from "jose"; 
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -13,7 +14,8 @@ dayjs.extend(timezone);
 dotenv.config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-
+const JWT_SECRET = new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET);
+const deadLetterQueue = [];
 // Constants
 const IST_TIMEZONE = 'Asia/Kolkata';
 const MAX_RETRY_ATTEMPTS = 3;
@@ -34,80 +36,135 @@ export function initializeWebSocketServer(server) {
     perMessageDeflate: true
   });
   
-  wss.on('connection', (ws, req) => {
-    console.log('📱 New WebSocket connection established');
-    
-    // Set up heartbeat
-    ws.isAlive = true;
-    ws.on('pong', () => {
-      ws.isAlive = true;
-    });
-    
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message);
-        
-        if (data.type === 'auth' && data.userId) {
-          // Clean up any existing connection for this user
-          const existingConnection = userConnections.get(data.userId);
-          if (existingConnection && existingConnection !== ws) {
-            existingConnection.terminate();
-          }
-          
-          // Associate this connection with the user
-          userConnections.set(data.userId, ws);
-          connectionHeartbeat.set(data.userId, dayjs());
-          
-          console.log(`✅ User ${data.userId} authenticated via WebSocket`);
-          
-          // Send pending notifications immediately
-          sendPendingNotifications(data.userId);
-          
-          // Send connection confirmation
-          ws.send(JSON.stringify({
-            type: 'connection_confirmed',
-            timestamp: getCurrentISTTime().toISOString(),
-            message: 'Connected to notification service'
-          }));
-        }
-        
-        if (data.type === 'ping') {
-          ws.send(JSON.stringify({
-            type: 'pong',
-            timestamp: getCurrentISTTime().toISOString()
-          }));
-        }
+ wss.on('connection', (ws, req) => {
+  console.log('📱 New WebSocket connection established');
 
-        if (data.type === 'mark_read' && data.notificationId) {
-          markNotificationAsRead(data.notificationId, data.userId);
+  ws.isAlive = true;
+  ws.isAuthenticated = false;
+  ws.userId = null;
+
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
+  ws.on('message', async (message) => {
+    try {
+      const data = JSON.parse(message);
+
+      // --- AUTHENTICATION REQUIRED ---
+      if (!ws.isAuthenticated) {
+        if (data.type === 'auth' && data.token) {
+          try {
+            // Verify JWT
+            const { payload } = await jwtVerify(data.token, JWT_SECRET, {
+              algorithms: ["HS256"],
+              issuer: `${process.env.SUPABASE_URL}/auth/v1`,
+            });
+            ws.userId = payload.sub;
+            ws.isAuthenticated = true;
+
+            // Clean up any existing connection for this user
+            const existingConnection = userConnections.get(ws.userId);
+            if (existingConnection && existingConnection !== ws) {
+              existingConnection.terminate();
+            }
+
+            // Associate this connection with the user
+            userConnections.set(ws.userId, ws);
+            connectionHeartbeat.set(ws.userId, dayjs());
+
+            console.log(`✅ User ${ws.userId} authenticated via WebSocket`);
+
+            // Send pending notifications immediately
+            sendPendingNotifications(ws.userId);
+
+            // Send connection confirmation
+            ws.send(JSON.stringify({
+              type: 'connection_confirmed',
+              timestamp: getCurrentISTTime().toISOString(),
+              message: 'Connected to notification service'
+            }));
+          } catch (err) {
+            ws.send(JSON.stringify({ type: "error", message: "Invalid or expired token" }));
+            ws.terminate();
+          }
+        } else {
+          ws.send(JSON.stringify({ type: "error", message: "Authentication required. Send {type: 'auth', token: '<JWT>'}" }));
         }
-        
-      } catch (error) {
-        console.error('❌ Error processing WebSocket message:', error);
+        return;
+      }
+
+      // --- AUTHENTICATED USER ONLY BELOW THIS LINE ---
+
+      if (data.type === 'ping') {
         ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format'
+          type: 'pong',
+          timestamp: getCurrentISTTime().toISOString()
         }));
       }
-    });
-    
-    ws.on('close', () => {
-      // Remove connection from map
-      for (const [userId, connection] of userConnections.entries()) {
-        if (connection === ws) {
-          userConnections.delete(userId);
-          connectionHeartbeat.delete(userId);
-          console.log(`📴 User ${userId} disconnected from WebSocket`);
-          break;
-        }
+
+      if (data.type === 'mark_read' && data.notificationId) {
+        markNotificationAsRead(data.notificationId, ws.userId);
       }
-    });
-    
-    ws.on('error', (error) => {
-      console.error('❌ WebSocket error:', error);
-    });
+      if (data.type === 'mark_all_read') {
+        markAllNotificationsAsRead(ws.userId);
+      }
+      if (data.type === 'delete_notification' && data.notificationId) {
+        deleteNotification(data.notificationId, ws.userId);
+      }
+
+    } catch (error) {
+      console.error('❌ Error processing WebSocket message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format'
+      }));
+    }
   });
-  
+
+  ws.on('close', () => {
+    // Remove connection from map
+    for (const [userId, connection] of userConnections.entries()) {
+      if (connection === ws) {
+        userConnections.delete(userId);
+        connectionHeartbeat.delete(userId);
+        console.log(`📴 User ${userId} disconnected from WebSocket`);
+        break;
+      }
+    }
+  });
+
+  ws.on('error', (error) => {
+    console.error('❌ WebSocket error:', error);
+  });
+});
+    
+
+
+async function sendNotificationWithRetry(notification, userId, attempt = 1) {
+  const ws = userConnections.get(userId);
+  if (!ws || ws.readyState !== ws.OPEN) {
+    if (attempt >= MAX_RETRY_ATTEMPTS) {
+      deadLetterQueue.push({ notification, userId, reason: "No active connection" });
+      console.error(`❌ Notification to ${userId} failed after ${attempt} attempts`);
+      return false;
+    }
+    setTimeout(() => sendNotificationWithRetry(notification, userId, attempt + 1), 1000 * attempt);
+    return;
+  }
+  try {
+    ws.send(JSON.stringify(notification));
+    return true;
+  } catch (err) {
+    if (attempt >= MAX_RETRY_ATTEMPTS) {
+      deadLetterQueue.push({ notification, userId, reason: err.message });
+      console.error(`❌ Notification to ${userId} failed after ${attempt} attempts`);
+      return false;
+    }
+    setTimeout(() => sendNotificationWithRetry(notification, userId, attempt + 1), 1000 * attempt);
+  }
+}
+   
   // Heartbeat interval to detect dead connections
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
@@ -214,17 +271,17 @@ function getNotificationMeta(notification) {
   };
   
   const categoryConfig = {
-    birthday: { emoji: '🎂', color: '#FF69B4' },
-    exam: { emoji: '📚', color: '#4169E1' },
-    appointment: { emoji: '📅', color: '#32CD32' },
-    deadline: { emoji: '🚨', color: '#FF4500' },
-    workout: { emoji: '💪', color: '#FF6347' },
-    medication: { emoji: '💊', color: '#DA70D6' },
-    social: { emoji: '🎉', color: '#FFD700' },
-    travel: { emoji: '✈️', color: '#87CEEB' },
-    work: { emoji: '💼', color: '#708090' },
-    personal: { emoji: '✅', color: '#90EE90' },
-    reminder: { emoji: '🔔', color: '#B0C4DE' }
+    birthday: { emoji: '🎂', color: '#FF69B4', bgColor: '#FFF0F8' },
+    exam: { emoji: '📚', color: '#4169E1', bgColor: '#F0F4FF' },
+    appointment: { emoji: '📅', color: '#32CD32', bgColor: '#F0FFF0' },
+    deadline: { emoji: '🚨', color: '#FF4500', bgColor: '#FFF8F0' },
+    workout: { emoji: '💪', color: '#FF6347', bgColor: '#FFF5F5' },
+    medication: { emoji: '💊', color: '#DA70D6', bgColor: '#FDF0FF' },
+    social: { emoji: '🎉', color: '#FFD700', bgColor: '#FFFDF0' },
+    travel: { emoji: '✈️', color: '#87CEEB', bgColor: '#F0FEFF' },
+    work: { emoji: '💼', color: '#708090', bgColor: '#F8F9FA' },
+    personal: { emoji: '✅', color: '#90EE90', bgColor: '#F0FFF0' },
+    reminder: { emoji: '🔔', color: '#B0C4DE', bgColor: '#F8F9FF' }
   };
   
   const priority = priorityConfig[notification.priority] || priorityConfig.medium;
@@ -233,7 +290,9 @@ function getNotificationMeta(notification) {
   return {
     ...priority,
     categoryEmoji: category.emoji,
-    categoryColor: category.color
+    categoryColor: category.color,
+    categoryBgColor: category.bgColor
+
   };
 }
 
@@ -264,7 +323,8 @@ async function createInAppNotification(userId, notification) {
         category_color: meta.categoryColor,
         urgency: meta.urgency,
         event_time_ist: toIST(notification.event_date).format('YYYY-MM-DD HH:mm:ss'),
-        created_time_ist: currentTime.format('YYYY-MM-DD HH:mm:ss')
+        created_time_ist: currentTime.format('YYYY-MM-DD HH:mm:ss'),
+        action_buttons: getActionButtons(notification.event_type)
       }
     };
     
@@ -287,6 +347,38 @@ async function createInAppNotification(userId, notification) {
     return null;
   }
 }
+
+// Get action buttons based on event type
+function getActionButtons(eventType) {
+  const actionButtons = {
+    exam: [
+      { label: 'Study Now', action: 'study', color: '#4169E1' },
+      { label: 'Set Timer', action: 'timer', color: '#32CD32' }
+    ],
+    appointment: [
+      { label: 'Get Directions', action: 'directions', color: '#32CD32' },
+      { label: 'Call', action: 'call', color: '#FF6347' }
+    ],
+    medication: [
+      { label: 'Taken', action: 'taken', color: '#32CD32' },
+      { label: 'Snooze 10min', action: 'snooze', color: '#FFAA00' }
+    ],
+    workout: [
+      { label: 'Start Workout', action: 'start', color: '#FF6347' },
+      { label: 'Skip Today', action: 'skip', color: '#708090' }
+    ],
+    deadline: [
+      { label: 'Work Now', action: 'work', color: '#FF4500' },
+      { label: 'View Details', action: 'details', color: '#4169E1' }
+    ]
+  };
+  
+  return actionButtons[eventType] || [
+    { label: 'View', action: 'view', color: '#4169E1' },
+    { label: 'Done', action: 'done', color: '#32CD32' }
+  ];
+}
+
 
 // Enhanced real-time notification with retry mechanism
 async function sendRealTimeNotification(userId, notificationData, retryCount = 0) {
@@ -371,7 +463,7 @@ async function sendPendingNotifications(userId) {
 }
 
 // Mark notification as read
-async function markNotificationAsRead(notificationId, userId) {
+export async function markNotificationAsRead(notificationId, userId) {
   try {
     const { error } = await supabase
       .from('in_app_notifications')
@@ -388,6 +480,16 @@ async function markNotificationAsRead(notificationId, userId) {
     }
     
     console.log(`✅ Notification ${notificationId} marked as read for user ${userId}`);
+
+    // Broadcast update to connected user
+    const userConnection = userConnections.get(userId);
+    if (userConnection && userConnection.readyState === 1) {
+      userConnection.send(JSON.stringify({
+        type: 'notification_read',
+        notificationId: notificationId,
+        timestamp: getCurrentISTTime().toISOString()
+      }));
+    }
     return true;
     
   } catch (error) {
@@ -395,6 +497,77 @@ async function markNotificationAsRead(notificationId, userId) {
     return false;
   }
 }
+
+// Mark all notifications as read
+export async function markAllNotificationsAsRead(userId) {
+  try {
+    const { error } = await supabase
+      .from('in_app_notifications')
+      .update({ 
+        is_read: true, 
+        read_at: getCurrentISTTime().utc().toISOString() 
+      })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+    
+    if (error) {
+      console.error('❌ Error marking all notifications as read:', error);
+      return false;
+    }
+    
+    console.log(`✅ All notifications marked as read for user ${userId}`);
+    
+    // Broadcast update to connected user
+    const userConnection = userConnections.get(userId);
+    if (userConnection && userConnection.readyState === 1) {
+      userConnection.send(JSON.stringify({
+        type: 'all_notifications_read',
+        timestamp: getCurrentISTTime().toISOString()
+      }));
+    }
+    
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Error in markAllNotificationsAsRead:', error);
+    return false;
+  }
+}
+
+// Delete notification
+export async function deleteNotification(notificationId, userId) {
+  try {
+    const { error } = await supabase
+      .from('in_app_notifications')
+      .delete()
+      .eq('id', notificationId)
+      .eq('user_id', userId);
+    
+    if (error) {
+      console.error('❌ Error deleting notification:', error);
+      return false;
+    }
+    
+    console.log(`✅ Notification ${notificationId} deleted for user ${userId}`);
+    
+    // Broadcast update to connected user
+    const userConnection = userConnections.get(userId);
+    if (userConnection && userConnection.readyState === 1) {
+      userConnection.send(JSON.stringify({
+        type: 'notification_deleted',
+        notificationId: notificationId,
+        timestamp: getCurrentISTTime().toISOString()
+      }));
+    }
+    
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Error in deleteNotification:', error);
+    return false;
+  }
+}
+
 
 // Process notification batch with enhanced error handling
 async function processNotificationBatch(notifications) {
@@ -408,14 +581,10 @@ async function processNotificationBatch(notifications) {
     try {
       console.log(`🔄 Processing notification ${notification.id} for user ${notification.user_id}`);
       
-      // Create in-app notification
       const inAppNotification = await createInAppNotification(notification.user_id, notification);
       
       if (inAppNotification) {
-        // Send real-time notification if user is connected
         const realtimeSent = await sendRealTimeNotification(notification.user_id, inAppNotification);
-        
-        // Mark the original notification as sent
         await markNotificationAsSent(notification.id);
         
         results.successful++;
@@ -566,10 +735,67 @@ export async function getNotificationStats(userId) {
   }
 }
 
-// Export utility functions
-export {
-  processNotifications,
-  markNotificationAsRead,
-  sendPendingNotifications,
-  cleanupOldNotifications
-};
+// API Routes for notifications
+export async function getNotifications(req, res) {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 20, unread_only = false } = req.query;
+    
+    const offset = (page - 1) * limit;
+    
+    let query = supabase
+      .from('in_app_notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    
+    if (unread_only === 'true') {
+      query = query.eq('is_read', true);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) {
+      console.error('❌ Error fetching notifications:', error);
+      return res.status(500).json({ error: 'Failed to fetch notifications' });
+    }
+    
+    res.json({
+      notifications: data,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total: data.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error in getNotifications API:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function getUnreadCount(req, res) {
+  try {
+    const { userId } = req.params;
+    
+    const { count, error } = await supabase
+      .from('in_app_notifications')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+    
+    if (error) {
+      console.error('❌ Error fetching unread count:', error);
+      return res.status(500).json({ error: 'Failed to fetch unread count' });
+    }
+    
+    res.json({ unread_count: count || 0 });
+    
+  } catch (error) {
+    console.error('❌ Error in getUnreadCount API:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export { deadLetterQueue };
+

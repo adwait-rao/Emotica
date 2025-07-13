@@ -1,6 +1,8 @@
 import express from "express";
 import { chatRateLimiter } from "../middleware/ratelimiter.js";
 import { authenticate } from "../middleware/authentication.js";
+import schedulerManager from "../scheduler/index.js";
+
 import {
   storeMessage,
   getChatHistory,
@@ -279,6 +281,18 @@ async function processMessage(userId, sessionId, currentMessage) {
             description: eventCategory.description,
           }
         );
+
+        if (eventResult?.event?.[0]?.id) {
+          await schedulerManager.generateNotificationsForEvent(
+            eventResult.event[0].id,
+            userId,
+            parsedResponse.event_date,
+            parsedResponse.event_summary,
+            eventCategory.category,
+            eventCategory.notification_schedule,
+            eventCategory.priority
+          );
+        }
 
         console.log(
           "✅ Event created successfully:",

@@ -71,14 +71,32 @@ export async function upsertUserChat(userId, sessionId, messages) {
     return;
   }
 
-  const messagesToInsert = messages.map((msg) => ({
-    id: msg.id,
-    session_id: sessionId,
-    user_id: userId,
-    role: msg.role,
-    content: msg.encryptedContent ? msg.encryptedContent : encrypt(msg.content), // <-- FIXED
-    created_at: msg.created_at,
-  }));
+  const messagesToInsert = messages.map((msg) => {
+    // Fix: Handle both encrypted and plain content properly
+    let encryptedContent;
+    if (msg.encryptedContent) {
+      encryptedContent = msg.encryptedContent;
+    } else if (msg.content) {
+      encryptedContent = encrypt(msg.content);
+    } else {
+      console.error("❌ Message missing content:", msg);
+      throw new Error(`Message ${msg.id} missing content`);
+    }
+
+    return {
+      id: msg.id,
+      session_id: sessionId,
+      user_id: userId,
+      role: msg.role,
+      content: encryptedContent,
+      created_at: msg.created_at,
+    };
+  });
+
+  console.log("📝 Batch inserting messages:", messagesToInsert.length);
+  messagesToInsert.forEach((msg) => {
+    console.log(`  - ${msg.id}: ${msg.role}, content: ${!!msg.content}`);
+  });
 
   const { data, error } = await supabase.from("mess").upsert(messagesToInsert, {
     onConflict: "id",
@@ -87,40 +105,54 @@ export async function upsertUserChat(userId, sessionId, messages) {
 
   if (error) {
     console.error("❌ Error upserting messages into 'mess':", error);
+    console.error("❌ Messages data:", messagesToInsert);
     throw error;
   }
 
   console.log(`✅ Upserted ${messagesToInsert.length} messages to 'mess'`);
   return data;
 }
-
 // NEW: Upsert single message to Supabase
 export async function upsertSingleMessage(userId, sessionId, message) {
   if (!message) {
     console.log("No message to upsert");
     return;
   }
-  console.log(message.content, "content before encryption in redis");
-  const encrypted = encrypt(message.encryptedContent);
-  const messageToInsert = {
+
+  // Fix: Ensure we always have encrypted content for the database
+  let encryptedContent;
+  if (message.encryptedContent) {
+    encryptedContent = message.encryptedContent;
+  } else if (message.content) {
+    encryptedContent = encrypt(message.content);
+  } else {
+    throw new Error("Cannot upsert message: missing content");
+  }
+
+  const msgToInsert = {
     id: message.id,
     session_id: sessionId,
     user_id: userId,
     role: message.role,
-    content: encrypted,
+    content: encryptedContent, // This should never be null now
     created_at: message.created_at,
   };
 
+  console.log("📝 Inserting message:", {
+    id: msgToInsert.id,
+    role: msgToInsert.role,
+    contentExists: !!msgToInsert.content,
+    sessionId: msgToInsert.session_id,
+    content: encryptedContent,
+  });
+
   const { data, error } = await supabase
     .from("mess")
-    .upsert([messageToInsert], {
-      onConflict: "id",
-      ignoreDuplicates: false,
-    })
-    .select();
+    .upsert([msgToInsert], { onConflict: "id", ignoreDuplicates: false });
 
   if (error) {
-    console.error("Error upserting single message:", error);
+    console.error("❌ Error upserting single message:", error);
+    console.error("❌ Message data:", msgToInsert);
     throw error;
   }
 
