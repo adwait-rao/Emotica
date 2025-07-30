@@ -29,7 +29,7 @@ const Button = ({ type = "primary", children }: ButtonProps) => {
   return (
     <TouchableOpacity
       style={type === "primary" ? shadowStyle : undefined}
-      className={`${baseStyle} ${styles[type]} text-white`}
+      className={`${baseStyle} ${styles[type]} text-white flex items-center`}
     >
       <Text
         className={`${type === "primary" ? "text-white" : "text-white"} text-xl`}

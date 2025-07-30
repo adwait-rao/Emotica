@@ -13,7 +13,7 @@ const WeeklyDatePicker = () => {
   useEffect(() => {
     const index = dates.findIndex((date) => isToday(date));
     if (scrollViewRef.current && index >= 0) {
-      scrollViewRef.current.scrollTo({ x: index * 92, animated: true });
+      scrollViewRef.current.scrollTo({ x: index * 60, animated: true });
     }
   }, []);
 
@@ -49,13 +49,13 @@ const WeeklyDatePicker = () => {
   };
 
   return (
-    <View className="px-4 py-5">
+    <View className=" py-5">
       <MaskedView
         style={{ height: 90, width: "100%" }}
         maskElement={
           <LinearGradient
             colors={["transparent", "black", "black", "transparent"]}
-            locations={[0, 0.08, 0.92, 1]}
+            locations={[0, 0.05, 0.95, 1]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={{ flex: 1 }}
@@ -69,7 +69,8 @@ const WeeklyDatePicker = () => {
           contentContainerStyle={{
             justifyContent: "center",
             alignItems: "center",
-            paddingHorizontal: 60,
+            paddingStart: 10,
+            paddingEnd: 140,
           }}
           className="flex-row gap-3"
         >
@@ -98,7 +99,7 @@ const WeeklyDatePicker = () => {
                 key={date.toISOString()}
                 style={shadowStyle}
                 className={[
-                  "h-20 w-20 mx-2 p-3 justify-between items-center relative overflow-hidden",
+                  "h-20 w-20 mx-3 p-3 justify-between items-center relative overflow-hidden",
                   borderClass,
                   borderWidthClass,
                   bgClass,

@@ -1,7 +1,6 @@
-import MaskedView from "@react-native-masked-view/masked-view";
 import { LinearGradient } from "expo-linear-gradient";
 import React from "react";
-import { FlatList, Text, TouchableOpacity, View } from "react-native";
+import { Text, TouchableOpacity } from "react-native";
 
 // Sample data with event names
 export const entries = [
@@ -25,7 +24,7 @@ export const entries = [
   },
 ];
 
-type Entry = {
+export type Entry = {
   id: string;
   event_name: string;
   event_date: string;
@@ -44,11 +43,11 @@ const formatEventDate = (dateString: string): string => {
   });
 };
 
-const EventCard = ({ item }: { item: Entry }) => {
+export const EventCard = ({ item }: { item: Entry }) => {
   return (
     <TouchableOpacity
       activeOpacity={0.9}
-      className="mb-4"
+      className="mb-4 border-2 border-fuchsia-50"
       style={{ borderRadius: 16 }}
     >
       <LinearGradient
@@ -73,39 +72,3 @@ const EventCard = ({ item }: { item: Entry }) => {
     </TouchableOpacity>
   );
 };
-
-const EventList = () => {
-  return (
-    <View className="flex-1 bg-background">
-      <Text className="text-2xl font-bold mb-4 text-primary">Your Events</Text>
-      <MaskedView
-        maskElement={
-          <LinearGradient
-            colors={["transparent", "black", "black", "transparent"]}
-            locations={[0, 0.01, 0.5, 1]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={{ flex: 1 }}
-          />
-        }
-      >
-        <FlatList
-          data={entries}
-          renderItem={({ item }) => <EventCard item={item} />}
-          keyExtractor={(item) => item.id}
-          ListEmptyComponent={
-            <Text className="text-center text-gray-500 py-4">
-              No events yet.
-            </Text>
-          }
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingBottom: 12,
-          }}
-        />
-      </MaskedView>
-    </View>
-  );
-};
-
-export default EventList;

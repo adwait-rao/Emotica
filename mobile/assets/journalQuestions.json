@@ -1,0 +1,47 @@
+[
+  {
+    "id": "1",
+    "question": "What situation triggered my difficult thoughts/feelings?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "2",
+    "question": "What were my automatic thoughts?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "3",
+    "question": "What emotions did I feel? (e.g., sadness, anger, anxiety)",
+    "input_type": "text"
+  },
+  {
+    "id": "4",
+    "question": "On a scale of 1-10, how intense was each emotion?",
+    "input_type": "number"
+  },
+  {
+    "id": "5",
+    "question": "What evidence supports my automatic thoughts?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "6",
+    "question": "What evidence contradicts my automatic thoughts?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "7",
+    "question": "What is an alternative, more balanced thought?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "8",
+    "question": "How do I feel now, after considering alternative thoughts?",
+    "input_type": "textarea"
+  },
+  {
+    "id": "9",
+    "question": "What action can I take based on this new perspective?",
+    "input_type": "textarea"
+  }
+]

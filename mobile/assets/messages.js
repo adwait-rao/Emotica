@@ -1,0 +1,111 @@
+
+  export const sampleChatArr= [
+    {
+      id: "msg-18",
+      text: "Exactly! And you can adapt it too — even doing just 3 or 4 of the senses can help. Consistency matters more than perfection.",
+      isUser: false,
+      timestamp: "2025-06-28 10:30:00.000",
+    },
+    {
+      id: "msg-17",
+      text: "That’s cool! I’ll try that next time I’m feeling stressed at my desk.",
+      isUser: true,
+      timestamp: "2025-06-28 10:29:45.000",
+    },
+    {
+      id: "msg-16",
+      text: "It’s a quick sensory exercise:\n\n- 5 things you can see,\n- 4 things you can touch,\n- 3 things you can hear,\n- 2 things you can smell,\n- 1 thing you can taste.\n\nIt helps bring your brain out of overthinking mode and back to the now.",
+      isUser: false,
+      timestamp: "2025-06-28 10:28:30.000",
+    },
+    {
+      id: "msg-15",
+      text: "What’s the 5-4-3-2-1 technique?",
+      isUser: true,
+      timestamp: "2025-06-28 10:28:15.000",
+    },
+    {
+      id: "msg-14",
+      text: "Yes, absolutely. One simple but powerful tool is called grounding — or bringing your attention back to the present moment. For example, the 5-4-3-2-1 technique can help interrupt cycles of anxious thinking.",
+      isUser: false,
+      timestamp: "2025-06-28 10:27:00.000",
+    },
+    {
+      id: "msg-13",
+      text: "Do you have any other tips for managing stress during the day?",
+      isUser: true,
+      timestamp: "2025-06-28 10:26:45.000",
+    },
+    {
+      id: "msg-12",
+      text: "You're very welcome! I'm glad we found something manageable. We’ll keep building from here.",
+      isUser: false,
+      timestamp: "2025-06-28 10:25:30.000",
+    },
+    {
+      id: "msg-11",
+      text: "Thanks, I really appreciate the support.",
+      isUser: true,
+      timestamp: "2025-06-28 10:25:15.000",
+    },
+    {
+      id: "msg-10",
+      text: "Fantastic! Let me know how it goes. Small steps can make a big difference.",
+      isUser: false,
+      timestamp: "2025-06-28 10:24:00.000",
+    },
+    {
+      id: "msg-9",
+      text: "That actually sounds doable. I’ll give it a shot tonight!",
+      isUser: true,
+      timestamp: "2025-06-28 10:23:45.000",
+    },
+    {
+      id: "msg-8",
+      text: "Wonderful! The idea is to write down all your worries or unfinished tasks before bed, so your mind doesn’t keep cycling through them while you try to rest. Would you be open to trying this for a few nights?",
+      isUser: false,
+      timestamp: "2025-06-28 10:22:30.000",
+    },
+    {
+      id: "msg-7",
+      text: "Yes, please! Anything that could help me relax at night would be great.",
+      isUser: true,
+      timestamp: "2025-06-28 10:22:15.000",
+    },
+    {
+      id: "msg-6",
+      text: "That makes sense. Racing thoughts at bedtime are very common when we’re under stress. One technique that might help is called a 'worry journal' — would you like to hear about it?",
+      isUser: false,
+      timestamp: "2025-06-28 10:21:00.000",
+    },
+    {
+      id: "msg-5",
+      text: "I think it's mostly anxiety. I lie in bed thinking about all the things I didn’t finish during the day.",
+      isUser: true,
+      timestamp: "2025-06-28 10:20:45.000",
+    },
+    {
+      id: "msg-4",
+      text: "That sounds exhausting. Stress from work can definitely spill over into other areas of life. Have you noticed any specific triggers or patterns with your sleep issues?",
+      isUser: false,
+      timestamp: "2025-06-28 10:19:30.000",
+    },
+    {
+      id: "msg-3",
+      text: "Work has been super stressful, and I’ve been having trouble sleeping. I feel like I can’t catch a break.",
+      isUser: true,
+      timestamp: "2025-06-28 10:19:15.000",
+    },
+    {
+      id: "msg-2",
+      text: "Hi there, thank you for sharing that. It’s completely okay to feel overwhelmed. Can you tell me a bit more about what’s been going on?",
+      isUser: false,
+      timestamp: "2025-06-28 10:18:00.000",
+    },
+    {
+      id: "msg-1",
+      text: "Hi, I'm feeling really overwhelmed lately. I don't know where to start.",
+      isUser: true,
+      timestamp: "2025-06-28 10:17:45.000",
+    },
+  ];

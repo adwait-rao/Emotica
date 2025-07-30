@@ -1,0 +1,62 @@
+[
+  {
+    "id": "insight_avg_mood_score",
+    "category": "Overall Well-being & Mood Trends",
+    "name": "Average Daily Mood Score",
+    "description": "Your average overall mood level over a selected period (e.g., this week vs. last week).",
+    "derivation_source": "Daily Check-ins",
+    "display_type_suggestion": "Line Graph, Trend Indicator (up/down arrow)",
+    "ai_summary_potential": "Highlight periods of positive/negative mood trends; compare to previous periods.",
+    "actionable_tip_potential": "Suggest reflection during low mood, reinforce positive habits during high mood."
+  },
+  {
+    "id": "insight_most_frequent_emotions",
+    "category": "Emotional Patterns",
+    "name": "Most Frequent Emotions",
+    "description": "The top emotions you've logged most often (from initial check-ins and CBT entries).",
+    "derivation_source": "Daily Check-ins, CBT Journaling (Initial Emotions)",
+    "display_type_suggestion": "Bar Chart (frequency count), Word Cloud (larger for more frequent)",
+    "ai_summary_potential": "Identify your most prevalent emotional challenges; categorize positive vs. negative emotions.",
+    "actionable_tip_potential": "Suggest coping strategies for specific frequently occurring negative emotions."
+  },
+  {
+    "id": "insight_cognitive_distortions_frequency",
+    "category": "Thought Patterns",
+    "name": "Common Cognitive Distortions",
+    "description": "The most frequent unhelpful thinking styles identified in your 'Automatic Thoughts'.",
+    "derivation_source": "CBT Journaling (Automatic Thoughts)",
+    "display_type_suggestion": "Bar Chart (frequency count), Word Cloud",
+    "ai_summary_potential": "Highlight recurring thought traps; explain common distortions in simple terms.",
+    "actionable_tip_potential": "Offer strategies specific to challenging identified distortions (e.g., 'Evidence Against' prompts)."
+  },
+  {
+    "id": "insight_reframe_effectiveness_score",
+    "category": "CBT Effectiveness & Progress",
+    "name": "Reframe Effectiveness Score",
+    "description": "The average percentage decrease in negative emotion intensity *after* completing a CBT thought record.",
+    "derivation_source": "CBT Journaling (Initial vs. Outcome Emotion Intensities)",
+    "display_type_suggestion": "Overall Percentage, Before/After Comparison Chart",
+    "ai_summary_potential": "Quantify the success of using CBT techniques; reinforce positive impact.",
+    "actionable_tip_potential": "Encourage continued use of CBT; provide tips for deeper re-framing."
+  },
+  {
+    "id": "insight_journaling_streak",
+    "category": "Engagement & Consistency",
+    "name": "Journaling Streak",
+    "description": "Your current consecutive daily journaling streak.",
+    "derivation_source": "CBT Journaling (Timestamp)",
+    "display_type_suggestion": "Large Number with Flame Icon, Progress Bar",
+    "ai_summary_potential": "Celebrate consistency; provide encouragement for maintaining habit.",
+    "actionable_tip_potential": "Offer gentle reminders if streak is at risk; suggest benefits of consistent journaling."
+  },
+  {
+    "id": "insight_common_situation_triggers",
+    "category": "Contextual Patterns",
+    "name": "Common Situation Triggers",
+    "description": "Recurring themes or types of situations that precede your journal entries or specific emotional responses.",
+    "derivation_source": "CBT Journaling (The Situation)",
+    "display_type_suggestion": "Word Cloud, Tag List, Bar Chart (frequency)",
+    "ai_summary_potential": "Identify external factors influencing mood/thoughts; link to specific emotions.",
+    "actionable_tip_potential": "Suggest strategies for managing specific trigger situations (e.g., 'prepare for X event')."
+  }
+]

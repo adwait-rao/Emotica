@@ -1,47 +1,59 @@
-import "@/global.css";
+import { AuthProvider } from "@/context/AuthContext";
+import { DancingScript_400Regular } from "@expo-google-fonts/dancing-script";
 import {
   Inter_400Regular,
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
+  Inter_900Black,
 } from "@expo-google-fonts/inter";
 import { useFonts } from "expo-font";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
+import { SplashScreen, Stack } from "expo-router";
 import { useEffect } from "react";
-import { View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import "react-native-reanimated";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
+// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
+  const [loaded, error] = useFonts({
     "Inter-Regular": Inter_400Regular,
     "Inter-Medium": Inter_500Medium,
     "Inter-SemiBold": Inter_600SemiBold,
     "Inter-Bold": Inter_700Bold,
+    "Inter-Black": Inter_900Black,
+    "DancingScript-Regular": DancingScript_400Regular,
   });
 
+  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
-    if (fontsLoaded || fontError) {
+    if (error) throw error;
+  }, [error]);
+
+  useEffect(() => {
+    if (loaded) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError]);
+  }, [loaded]);
 
-  if (!fontsLoaded && !fontError) {
+  if (!loaded) {
     return null;
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: "white" },
-          }}
-        />
-      </SafeAreaView>
-    </View>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+          <Stack.Screen name="journal" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="edit-profile"
+            options={{ presentation: "modal", title: "Edit Profile" }}
+          />
+        </Stack>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
